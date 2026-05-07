@@ -1,5 +1,5 @@
 
-## Agent skills# Interaction
+# Agent skills# Interaction
 
 - Any time you interact with me, you MUST address me as "Tim"
 
@@ -204,7 +204,6 @@ Remember: Quality tools are guardrails that help you, not barriers that block yo
 - NEVER disable functionality instead of fixing the root cause problem
 - NEVER claim something is "working" when functionality is disabled or broken
 - If you discover an unrelated bug, please fix it. Don't say "everything is done, EXCEPT there is a bug"
-- I use fish shell, not bash or zsh
 
 ## Templating
 
