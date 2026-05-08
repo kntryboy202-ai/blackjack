@@ -1,0 +1,63 @@
+// ABOUTME: Prisma schema defining all database models for the blackjack app.
+// ABOUTME: Uses SQLite in development; swap DATABASE_URL for PostgreSQL in production.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  username     String        @unique
+  email        String        @unique
+  passwordHash String?
+  provider     String?
+  providerId   String?
+  bankroll     Int           @default(1000)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     GameSession[]
+  hands        HandRecord[]
+}
+
+model GameSession {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  tableId   String
+  startedAt DateTime     @default(now())
+  endedAt   DateTime?
+  netChips  Int          @default(0)
+  hands     HandRecord[]
+}
+
+model HandRecord {
+  id          String      @id @default(cuid())
+  sessionId   String
+  session     GameSession @relation(fields: [sessionId], references: [id])
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  betAmount   Int
+  outcome     String
+  playerCards String
+  dealerCards String
+  actions     String
+  playedAt    DateTime    @default(now())
+}
+
+model Table {
+  id            String   @id @default(cuid())
+  name          String
+  deckCount     Int      @default(6)
+  minBet        Int      @default(1)
+  maxBet        Int      @default(500)
+  maxPlayers    Int      @default(6)
+  npcCount      Int      @default(0)
+  turnTimerSecs Int      @default(30)
+  isPrivate     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
