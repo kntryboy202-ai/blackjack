@@ -8,7 +8,7 @@
 
 **Human Player** — An authenticated user with a persistent `User` row and bankroll in the DB. Their hands are recorded in `HandRecord`.
 
-**NPC Bot** — An ephemeral, server-controlled player that fills empty seats when a game starts. Has no DB row, no `HandRecord` writes, and is discarded after each round. Plays using the dealer mimic strategy.
+**NPC Bot** — A server-controlled player that auto-fills empty seats when a game starts. Has no DB row and no `HandRecord` writes. Persists across rounds in memory until the room is destroyed (all human players leave). Plays using the dealer mimic strategy.
 
 **Dealer Mimic Strategy** — The NPC Bot play rule: reuse `dealerShouldHit()` from `Rules.ts`. Hit below 17, stand at hard/soft 17 or above.
 
@@ -18,6 +18,6 @@
 
 **Hand Outcome** — The result of a seat's round: `win`, `loss`, `push`, `blackjack`, or `surrender`. Recorded in `HandRecord` for Human Players only.
 
-**Bankroll** — Integer chip count. Persisted to DB for Human Players after each `RESOLVE`. Ephemeral for NPC Bots (reset to a fresh random bet amount each round).
+**Bankroll** — Integer chip count. Persisted to DB for Human Players after each `RESOLVE`. In-memory only for NPC Bots — their bankroll updates during play but is never written to the DB and is lost when the room is destroyed.
 
 **Stats** — Aggregate hand history for a Human Player: wins, losses, pushes, blackjacks, net profit. Computed from `HandRecord`. Does not include bot hands.

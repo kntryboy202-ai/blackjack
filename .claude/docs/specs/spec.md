@@ -183,10 +183,10 @@ model Table {
 
 ### NPC Behavior
 
-- Uses a simplified **basic strategy lookup table** (hard totals, soft totals, pairs)
-- NPC acts after a short randomized delay (500–1500ms) to simulate human timing
-- NPC bankroll is virtual (does not persist, resets each game)
-- NPC count is set at table creation (0–5)
+- Uses **dealer mimic strategy** — reuses `dealerShouldHit()` from `Rules.ts`: hit below 17, stand at hard/soft 17 or above
+- NPC acts after a randomized delay (800–1200ms) to simulate human timing
+- NPC bankroll is in-memory only — not persisted to DB, lost when the room is destroyed
+- NPCs auto-fill empty seats when the host fires `start_game` (random count: 3–6 total seats)
 
 ---
 
@@ -414,39 +414,46 @@ POST   /api/profile/refill        # Claim free bankroll refill
 
 ## Development Phases
 
-### Phase 1 — Foundation
+### Phase 1 — Foundation ✅ Shipped
 
-- [ ] Monorepo setup (pnpm workspaces)
-- [ ] Prisma schema + SQLite migrations
-- [ ] Express server + Socket.io wiring
-- [ ] Auth (local only first, OAuth second)
-- [ ] Basic game engine: `Deck`, `Hand`, `Rules`, `GameRoom` state machine
-- [ ] Minimal React table UI (no animations yet)
+- [x] Monorepo setup (pnpm workspaces)
+- [x] Prisma schema + SQLite migrations
+- [x] Express server + Socket.io wiring
+- [x] Auth (local + GitHub OAuth)
+- [x] Game engine: `Deck`, `Hand`, `Rules`, `GameRoom` state machine (hit/stand/bust/blackjack/push)
+- [x] Bankroll escrow + settlement at `RESOLVE`
+- [x] Minimal React table UI
 
-### Phase 2 — Full Gameplay
+### Phase 2 — Show-Ready Polish ✅ Shipped
 
-- [ ] All player actions (split, double, insurance, surrender)
-- [ ] NPC basic strategy engine
-- [ ] Turn timer with Socket.io
-- [ ] Bankroll escrow + settlement
-- [ ] Free refill flow
+- [x] Felt table visual design + CSS design tokens
+- [x] Card deal animation (slide-in with staggered `dealIndex`)
+- [x] Lobby page + table creation
+- [x] `HandRecord` persistence after each resolved round
+- [x] `GameSession` open/close tracking
 
-### Phase 3 — UI Polish
+### Phase 3 — NPC Bots + Turn Timer ✅ Shipped
 
-- [ ] Felt table visual design + tokens
-- [ ] Card deal / flip / hit animations
-- [ ] Chip drag-and-drop bet UI
-- [ ] Win/bust/blackjack effects
-- [ ] Lobby page + table creation modal
+- [x] `fillBotsForStart()` — auto-fills 3–6 total seats with named NPC bots on `start_game`
+- [x] Bots play dealer mimic strategy with 800–1200ms artificial delay
+- [x] Bots bet randomly within table min/max; persist across rounds until room is destroyed
+- [x] 30-second turn timer with auto-stand on expiry
+- [x] Client-side countdown per active human seat (turns red at ≤5s)
 
-### Phase 4 — Profile & History
+### Phase 4 — Full Player Actions
 
-- [ ] Profile stats page
-- [ ] Hand history table
-- [ ] Bankroll chart (recharts)
-- [ ] OAuth (Google + GitHub)
+- [ ] Split (matching rank pairs → two independent hands)
+- [ ] Double down (double bet, one card, auto-stand)
+- [ ] Surrender (forfeit hand, recover half bet)
+- [ ] Insurance (side bet when dealer shows Ace)
 
-### Phase 5 — VPS Deployment
+### Phase 5 — Profile & History
+
+- [ ] Profile stats page (win rate, net chips, biggest win)
+- [ ] Hand history table (paginated)
+- [ ] Bankroll history chart (recharts)
+
+### Phase 6 — VPS Deployment
 
 - [ ] Swap SQLite → PostgreSQL
 - [ ] Docker Compose (app + db)
