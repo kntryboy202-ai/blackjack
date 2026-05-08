@@ -1,0 +1,16 @@
+/* ABOUTME: CSS custom property design tokens for the casino theme. */
+/* ABOUTME: Import this file first — all other styles depend on these variables. */
+:root {
+  --felt-green: #1a5c35;
+  --felt-dark: #0f3d22;
+  --card-face: #f5f0e8;
+  --card-back: #1a2744;
+  --chip-gold: #c9a84c;
+  --chip-red: #c0392b;
+  --chip-blue: #2980b9;
+  --rail-brown: #3d1f0a;
+  --text-primary: #f0e6d3;
+  --text-dim: #8a7a6a;
+  --win-glow: #f1c40f;
+  --bust-red: #e74c3c;
+}

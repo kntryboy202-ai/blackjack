@@ -116,6 +116,30 @@ export function registerHandlers(io: Server, socket: Socket): void {
     }
   });
 
+  socket.on("skip_insurance", () => {
+    const tableId = socketToTable.get(socket.id);
+    if (!tableId) return;
+    const room = rooms.get(tableId);
+    if (!room) return;
+    try {
+      room.skipInsurance();
+    } catch (err) {
+      socket.emit("error", { message: (err as Error).message });
+    }
+  });
+
+  socket.on("next_round", () => {
+    const tableId = socketToTable.get(socket.id);
+    if (!tableId) return;
+    const room = rooms.get(tableId);
+    if (!room) return;
+    try {
+      room.nextRound();
+    } catch (err) {
+      socket.emit("error", { message: (err as Error).message });
+    }
+  });
+
   socket.on("leave_table", () => {
     const tableId = socketToTable.get(socket.id);
     if (!tableId) return;
