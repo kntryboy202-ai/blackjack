@@ -30,3 +30,101 @@ button {
 input {
   font: inherit;
 }
+
+/* ── Table layout ── */
+
+.table-surface {
+  min-height: 100vh;
+  background: radial-gradient(
+    ellipse at 50% 30%,
+    #1e6e3f 0%,
+    var(--felt-green) 50%,
+    var(--felt-dark) 100%
+  );
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas:
+    "hud"
+    "dealer"
+    "seats"
+    "actions";
+  padding: 16px;
+  gap: 16px;
+}
+
+.table-hud {
+  grid-area: hud;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dealer-zone {
+  grid-area: dealer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 120px 120px 0 0;
+  border: 3px solid var(--rail-brown);
+  padding: 24px 32px 16px;
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.dealer-zone__label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.seats-arc {
+  grid-area: seats;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.seats-arc .seat:first-child,
+.seats-arc .seat:last-child {
+  transform: translateY(12px);
+}
+
+.seats-arc .seat:nth-child(2),
+.seats-arc .seat:nth-last-child(2) {
+  transform: translateY(6px);
+}
+
+.seat {
+  min-width: 120px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  transition:
+    border-color 200ms,
+    box-shadow 200ms;
+}
+
+.seat.is-active {
+  border-color: var(--win-glow);
+  box-shadow: 0 0 12px rgba(241, 196, 15, 0.3);
+}
+
+.seat.is-mine {
+  background: rgba(201, 168, 76, 0.12);
+}
+
+.action-strip {
+  grid-area: actions;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding-bottom: 8px;
+}

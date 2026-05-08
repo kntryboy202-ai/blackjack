@@ -8,6 +8,7 @@ export interface AuthUser {
   username: string;
   email: string;
   bankroll: number;
+  avatarUrl?: string | null;
 }
 
 interface GameStore {

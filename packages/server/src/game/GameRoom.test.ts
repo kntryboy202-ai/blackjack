@@ -94,6 +94,8 @@ describe("GameRoom — betting phase", () => {
   });
 
   it("placeBet deducts amount from bankroll (escrow)", () => {
+    // Add a second player so placing one bet doesn't auto-trigger the deal
+    room.addPlayer("u2", "Bob", 1000, "sock-2");
     room.placeBet("u1", 50);
     const seat = room.getSnapshot().seats[0];
     expect(seat?.bankroll).toBe(950);

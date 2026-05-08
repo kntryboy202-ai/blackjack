@@ -1,4 +1,4 @@
-// ABOUTME: Integration tests for auth routes: register, login, logout, and session check.
+// ABOUTME: Integration tests for auth routes: register, login, logout, session check, and GitHub OAuth verify.
 // ABOUTME: Uses a real SQLite test.db database (no mocks) via supertest against the full Express app.
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -18,6 +18,7 @@ beforeAll(() => {
 });
 
 import { db } from "../config/db.js";
+import { findOrCreateGitHubUser } from "../config/passport.js";
 // Import app AFTER env is set by vitest.config.ts and after db push
 // eslint-disable-next-line import/first
 import { app } from "../index.js";
@@ -170,5 +171,62 @@ describe("POST /api/auth/logout", () => {
 
     // Should no longer be authenticated
     await request(app).get("/api/auth/me").set("Cookie", cookies).expect(401);
+  });
+});
+
+describe("findOrCreateGitHubUser", () => {
+  it("creates a new user when no existing account matches", async () => {
+    const user = await findOrCreateGitHubUser(
+      "gh-123",
+      "newuser@example.com",
+      "newuser",
+      undefined
+    );
+
+    expect(user.providerId).toBe("gh-123");
+    expect(user.provider).toBe("github");
+    expect(user.email).toBe("newuser@example.com");
+    expect(user.bankroll).toBe(1000);
+    expect(user.passwordHash).toBeNull();
+  });
+
+  it("links GitHub to an existing local account when email matches", async () => {
+    const existing = await db.user.create({
+      data: { username: "localuser", email: "local@example.com", passwordHash: "hash" },
+    });
+
+    const user = await findOrCreateGitHubUser(
+      "gh-456",
+      "local@example.com",
+      "localuser",
+      "https://avatar.url/pic.jpg"
+    );
+
+    expect(user.id).toBe(existing.id);
+    expect(user.provider).toBe("github");
+    expect(user.providerId).toBe("gh-456");
+    expect(user.avatarUrl).toBe("https://avatar.url/pic.jpg");
+    expect(user.passwordHash).toBe("hash");
+  });
+
+  it("returns existing GitHub user on subsequent logins", async () => {
+    await findOrCreateGitHubUser("gh-789", "repeat@example.com", "repeatuser", undefined);
+
+    const user = await findOrCreateGitHubUser(
+      "gh-789",
+      "repeat@example.com",
+      "repeatuser",
+      undefined
+    );
+
+    const count = await db.user.count({ where: { providerId: "gh-789" } });
+    expect(count).toBe(1);
+    expect(user.providerId).toBe("gh-789");
+  });
+
+  it("falls back to githubId@github.invalid when email is undefined", async () => {
+    const user = await findOrCreateGitHubUser("gh-no-email", undefined, "noemail-user", undefined);
+
+    expect(user.email).toBe("gh-no-email@github.invalid");
   });
 });
