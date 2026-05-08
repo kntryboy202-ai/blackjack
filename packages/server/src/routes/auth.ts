@@ -1,5 +1,5 @@
-// ABOUTME: Authentication routes — register, login, logout, and session check.
-// ABOUTME: Phase 1 supports local strategy only; OAuth is added in Phase 4.
+// ABOUTME: Authentication routes — register, login, logout, session check, and GitHub OAuth.
+// ABOUTME: Local strategy uses email/password; GitHub OAuth via passport-github2.
 import bcrypt from "bcrypt";
 import { type Request, type Response, Router } from "express";
 import passport from "passport";
@@ -12,6 +12,7 @@ type AuthUser = {
   username: string;
   email: string;
   bankroll: number;
+  avatarUrl?: string | null;
 };
 
 authRouter.post("/register", async (req: Request, res: Response) => {
@@ -85,6 +86,18 @@ authRouter.get("/me", (req: Request, res: Response) => {
     return;
   }
   const user = req.user as AuthUser;
-  const { id, username, email, bankroll } = user;
-  res.json({ id, username, email, bankroll });
+  const { id, username, email, bankroll, avatarUrl } = user;
+  res.json({ id, username, email, bankroll, avatarUrl: avatarUrl ?? null });
 });
+
+// GitHub OAuth — initiates the flow
+authRouter.get("/github", passport.authenticate("github", { scope: ["user:email"] }));
+
+// GitHub OAuth callback — on success redirect to client lobby, on failure back to login
+authRouter.get(
+  "/github/callback",
+  passport.authenticate("github", { failureRedirect: "/" }),
+  (_req: Request, res: Response) => {
+    res.redirect(`${process.env.CLIENT_URL ?? "http://localhost:5173"}/lobby`);
+  }
+);
