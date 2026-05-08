@@ -12,15 +12,25 @@ interface Table {
   maxPlayers: number;
 }
 
+interface Stats {
+  wins: number;
+  losses: number;
+  pushes: number;
+  blackjacks: number;
+  netProfit: number;
+}
+
 export function LobbyPage() {
   const navigate = useNavigate();
   const user = useGameStore((s) => s.user);
   const setUser = useGameStore((s) => s.setUser);
+  const userId = useGameStore((s) => s.user?.id ?? null);
 
   const [tables, setTables] = useState<Table[]>([]);
   const [createName, setCreateName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
     fetch("/api/lobby/tables", { credentials: "include" })
@@ -29,6 +39,16 @@ export function LobbyPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    fetch(`/api/profile/${userId}/stats`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: Stats | null) => {
+        if (data) setStats(data);
+      })
+      .catch(() => {});
+  }, [userId]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -88,6 +108,40 @@ export function LobbyPage() {
           </button>
         </div>
       </div>
+
+      {stats && (
+        <div
+          style={{
+            display: "flex",
+            gap: 24,
+            marginBottom: 24,
+            padding: "12px 16px",
+            background: "rgba(255,255,255,0.04)",
+            borderRadius: 6,
+            fontSize: 13,
+            color: "var(--text-dim)",
+          }}
+        >
+          <span>
+            W: <strong style={{ color: "var(--win-glow)" }}>{stats.wins}</strong>
+          </span>
+          <span>
+            L: <strong style={{ color: "var(--bust-red)" }}>{stats.losses}</strong>
+          </span>
+          <span>
+            Push: <strong style={{ color: "var(--text-primary)" }}>{stats.pushes}</strong>
+          </span>
+          <span>
+            BJ: <strong style={{ color: "var(--chip-gold)" }}>{stats.blackjacks}</strong>
+          </span>
+          <span>
+            Net:{" "}
+            <strong style={{ color: stats.netProfit >= 0 ? "var(--win-glow)" : "var(--bust-red)" }}>
+              {stats.netProfit >= 0 ? "+" : ""}${stats.netProfit.toLocaleString()}
+            </strong>
+          </span>
+        </div>
+      )}
 
       <form onSubmit={handleCreate} style={{ display: "flex", gap: 8, marginBottom: 32 }}>
         <input
