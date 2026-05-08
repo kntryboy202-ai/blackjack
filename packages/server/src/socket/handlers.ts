@@ -84,12 +84,8 @@ function driveBots(snapshot: GameRoomState, tableId: string): void {
       });
   }
 
-  // Bot turns: when active seat changes to an NPC
-  if (
-    snapshot.phase === "PLAYER_TURNS" &&
-    snapshot.activeSeatIndex !== null &&
-    snapshot.activeSeatIndex !== prevActiveSeat.get(tableId)
-  ) {
+  // Bot turns: whenever the active seat is an NPC (covers initial turn and consecutive hits)
+  if (snapshot.phase === "PLAYER_TURNS" && snapshot.activeSeatIndex !== null) {
     const activeSeat = snapshot.seats.find((s) => s.seatIndex === snapshot.activeSeatIndex);
     if (activeSeat?.isNpc) {
       setTimeout(
