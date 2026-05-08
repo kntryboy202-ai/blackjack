@@ -15,16 +15,20 @@ interface GameStore {
   user: AuthUser | null;
   gameState: GameRoomState | null;
   isConnected: boolean;
+  turnTimer: { seatIndex: number; expiresAt: number } | null;
   setUser: (user: AuthUser | null) => void;
   setGameState: (state: GameRoomState) => void;
   setConnected: (connected: boolean) => void;
+  setTurnTimer: (timer: { seatIndex: number; expiresAt: number } | null) => void;
 }
 
 export const useGameStore = create<GameStore>((set) => ({
   user: null,
   gameState: null,
   isConnected: false,
+  turnTimer: null,
   setUser: (user) => set({ user }),
   setGameState: (gameState) => set({ gameState }),
   setConnected: (isConnected) => set({ isConnected }),
+  setTurnTimer: (turnTimer) => set({ turnTimer }),
 }));

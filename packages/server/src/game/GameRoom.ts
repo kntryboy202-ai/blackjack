@@ -14,6 +14,29 @@ import { Deck } from "./Deck.js";
 import { calculateHand } from "./Hand.js";
 import { dealerShouldHit, resolveHand } from "./Rules.js";
 
+const BOT_NAMES = [
+  "Robo Rick",
+  "Lucky Lou",
+  "Dealer Dan",
+  "Card Shark Sam",
+  "Blind Bet Bob",
+  "All-In Alice",
+  "Count Von Count",
+  "Bust Betty",
+  "One-Eye Willie",
+  "Shufflebot",
+  "21 Jumpstreet",
+  "Blackjack Barry",
+];
+
+function shuffleArray<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j] as T, arr[i] as T];
+  }
+  return arr;
+}
+
 interface GameRoomConfig {
   deckCount: number;
   minBet: number;
@@ -79,6 +102,43 @@ export class GameRoom {
       outcome: null,
     });
     this.emit();
+  }
+
+  addBot(botId: string, name: string, bankroll: number): void {
+    if (this.seats.length >= 6) return;
+    this.seats.push({
+      userId: botId,
+      username: name,
+      seatIndex: this.seats.length,
+      bankroll,
+      bet: 0,
+      hand: [],
+      handValue: 0,
+      isSoft: false,
+      isBusted: false,
+      isBlackjack: false,
+      hasActed: false,
+      isNpc: true,
+      outcome: null,
+    });
+    // no emit — called before startGame
+  }
+
+  fillBotsForStart(): void {
+    const humanCount = this.seats.length;
+    const minTotal = Math.max(humanCount, 3);
+    const maxTotal = 6;
+    const botCount =
+      Math.floor(Math.random() * (maxTotal - minTotal + 1)) + (minTotal - humanCount);
+    const available = shuffleArray([...BOT_NAMES]);
+    for (let i = 0; i < botCount; i++) {
+      const name = available[i % available.length] ?? `Bot ${i + 1}`;
+      this.addBot(`bot-${Date.now()}-${i}`, name, this.config.maxBet * 200);
+    }
+  }
+
+  getConfig(): { minBet: number; maxBet: number } {
+    return { minBet: this.config.minBet, maxBet: this.config.maxBet };
   }
 
   removePlayer(userId: string): void {
