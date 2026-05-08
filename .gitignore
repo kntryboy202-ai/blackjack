@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+.cache/
+
+# Environment
+.env
+.env.local
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+.nyc_output/
