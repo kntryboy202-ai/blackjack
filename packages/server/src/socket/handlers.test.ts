@@ -269,4 +269,32 @@ describe("Socket.io leave_table", () => {
     const afterLeave = await afterLeavePromise;
     expect(afterLeave.seats).toHaveLength(0);
   });
+
+  it("start_game auto-fills bots so table has at least 3 seats", async () => {
+    socket = connectSocket(sessionCookie);
+    await waitForConnect(socket);
+
+    const joinedState = waitForEvent(socket, "game_state");
+    socket.emit("join_table", { tableId });
+    await joinedState;
+
+    socket.emit("start_game");
+
+    // Wait for a game_state snapshot where bots have appeared (PLACE_BETS)
+    const stateWithBots = await new Promise<{ seats: Array<{ isNpc: boolean }> }>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timeout waiting for bots")), 5000);
+        socket.on("game_state", (state: { seats: Array<{ isNpc: boolean }>; phase: string }) => {
+          if (state.phase === "PLACE_BETS" && state.seats.length >= 3) {
+            clearTimeout(timer);
+            resolve(state);
+          }
+        });
+      }
+    );
+
+    expect(stateWithBots.seats.length).toBeGreaterThanOrEqual(3);
+    const botSeats = stateWithBots.seats.filter((s) => s.isNpc);
+    expect(botSeats.length).toBeGreaterThanOrEqual(2);
+  });
 });

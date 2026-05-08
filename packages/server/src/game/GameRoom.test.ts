@@ -374,8 +374,11 @@ describe("GameRoom — resolution", () => {
     room.startGame();
     room.placeBet("u1", 50);
     skipInsuranceIfNeeded(room);
-    room.playerAction("u1", "stand");
-    // Now in RESOLVE
+    // Guard: if Alice got a blackjack the phase may already be RESOLVE
+    if (room.getSnapshot().phase === "PLAYER_TURNS") {
+      room.playerAction("u1", "stand");
+    }
+    expect(room.getSnapshot().phase).toBe("RESOLVE");
     room.nextRound();
     expect(room.getSnapshot().phase).toBe("PLACE_BETS");
   });
@@ -485,5 +488,69 @@ describe("GameRoom — player bust", () => {
     // After bust, dealer ran synchronously → RESOLVE
     expect(["DEALER_TURN", "RESOLVE"]).toContain(snap.phase);
     expect(snap.seats[0]?.isBusted).toBe(true);
+  });
+});
+
+describe("GameRoom — NPC bots", () => {
+  it("addBot adds a seat with isNpc: true", () => {
+    const room = makeRoom();
+    room.addBot("bot-1", "Robo Rick", 10000);
+    const snap = room.getSnapshot();
+    expect(snap.seats).toHaveLength(1);
+    expect(snap.seats[0]?.isNpc).toBe(true);
+    expect(snap.seats[0]?.username).toBe("Robo Rick");
+  });
+
+  it("fillBotsForStart with 1 human fills between 2 and 5 bots", () => {
+    const counts = new Set<number>();
+    for (let trial = 0; trial < 40; trial++) {
+      const room = makeRoom();
+      room.addPlayer("u1", "Alice", 1000, "sock-1");
+      room.fillBotsForStart();
+      const botCount = room.getSnapshot().seats.filter((s) => s.isNpc).length;
+      counts.add(botCount);
+      expect(botCount).toBeGreaterThanOrEqual(2);
+      expect(botCount).toBeLessThanOrEqual(5);
+    }
+    expect(counts.size).toBeGreaterThan(1);
+  });
+
+  it("fillBotsForStart with 5 humans adds 0 or 1 bots (already above min-3 threshold)", () => {
+    const room = makeRoom();
+    for (let i = 0; i < 5; i++) room.addPlayer(`u${i}`, `P${i}`, 1000, `s${i}`);
+    room.fillBotsForStart();
+    const bots = room.getSnapshot().seats.filter((s) => s.isNpc);
+    expect(bots.length).toBeLessThanOrEqual(1);
+  });
+
+  it("fillBotsForStart with 6 humans adds no bots", () => {
+    const room = makeRoom();
+    for (let i = 0; i < 6; i++) room.addPlayer(`u${i}`, `P${i}`, 1000, `s${i}`);
+    room.fillBotsForStart();
+    const bots = room.getSnapshot().seats.filter((s) => s.isNpc);
+    expect(bots).toHaveLength(0);
+  });
+
+  it("nextRound retains bot seats and resets their hand/bet", () => {
+    const room = makeRoom();
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addBot("bot-1", "Robo Rick", 10000);
+    room.startGame();
+    room.placeBet("u1", 10);
+    room.placeBet("bot-1", 10);
+    skipInsuranceIfNeeded(room);
+    room.playerAction("u1", "stand");
+    room.playerAction("bot-1", "stand");
+    room.nextRound();
+    const snap = room.getSnapshot();
+    const botSeat = snap.seats.find((s) => s.isNpc);
+    expect(botSeat).toBeDefined();
+    expect(botSeat?.bet).toBe(0);
+    expect(botSeat?.hand).toHaveLength(0);
+  });
+
+  it("getConfig returns minBet and maxBet", () => {
+    const room = makeRoom({ minBet: 5, maxBet: 200 });
+    expect(room.getConfig()).toEqual({ minBet: 5, maxBet: 200 });
   });
 });

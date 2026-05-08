@@ -3,13 +3,16 @@
 
 import type {
   ActionPayload,
+  GamePhase,
   GameRoomState,
   JoinTablePayload,
   PlaceBetPayload,
+  PlayerAction,
 } from "@blackjack/shared";
 import type { Server, Socket } from "socket.io";
 import { db } from "../config/db.js";
 import { GameRoom } from "../game/GameRoom.js";
+import { dealerShouldHit } from "../game/Rules.js";
 
 // In-memory registry of active game rooms, keyed by tableId
 const rooms = new Map<string, GameRoom>();
@@ -23,9 +26,17 @@ const userToSession = new Map<string, string>();
 // Tracks which rounds have already been persisted: "${tableId}:${roundNumber}"
 const resolvedRounds = new Set<string>();
 
+// Phase/seat tracking for bot automation and turn timer
+const prevPhase = new Map<string, GamePhase>();
+const prevActiveSeat = new Map<string, number | null>();
+
+// Active turn timers keyed by tableId
+const turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 async function persistResolvedRound(snapshot: GameRoomState, _tableId: string): Promise<void> {
   for (const seat of snapshot.seats) {
     if (!seat.outcome) continue;
+    // Bots have no sessionId — skip persistence for them
     const sessionId = userToSession.get(seat.userId);
     if (!sessionId) continue;
 
@@ -46,6 +57,89 @@ async function persistResolvedRound(snapshot: GameRoomState, _tableId: string): 
       where: { id: seat.userId },
       data: { bankroll: seat.bankroll },
     });
+  }
+}
+
+function driveBots(snapshot: GameRoomState, tableId: string): void {
+  const room = rooms.get(tableId);
+  if (!room) return;
+
+  // Bot betting: fire once when entering PLACE_BETS
+  if (snapshot.phase === "PLACE_BETS" && prevPhase.get(tableId) !== "PLACE_BETS") {
+    const { minBet, maxBet } = room.getConfig();
+    snapshot.seats
+      .filter((s) => s.isNpc)
+      .forEach((seat, i) => {
+        setTimeout(
+          () => {
+            const r = rooms.get(tableId);
+            if (!r) return;
+            const amount = minBet + Math.floor(Math.random() * (maxBet - minBet + 1));
+            try {
+              r.placeBet(seat.userId, amount);
+            } catch {}
+          },
+          (i + 1) * 500
+        );
+      });
+  }
+
+  // Bot turns: when active seat changes to an NPC
+  if (
+    snapshot.phase === "PLAYER_TURNS" &&
+    snapshot.activeSeatIndex !== null &&
+    snapshot.activeSeatIndex !== prevActiveSeat.get(tableId)
+  ) {
+    const activeSeat = snapshot.seats.find((s) => s.seatIndex === snapshot.activeSeatIndex);
+    if (activeSeat?.isNpc) {
+      setTimeout(
+        () => {
+          const r = rooms.get(tableId);
+          if (!r) return;
+          const action: PlayerAction = dealerShouldHit({
+            value: activeSeat.handValue,
+            isSoft: activeSeat.isSoft,
+          })
+            ? "hit"
+            : "stand";
+          try {
+            r.playerAction(activeSeat.userId, action);
+          } catch {}
+        },
+        800 + Math.floor(Math.random() * 400)
+      );
+    }
+  }
+}
+
+function manageTurnTimer(snapshot: GameRoomState, tableId: string, io: Server): void {
+  const activeChanged = snapshot.activeSeatIndex !== prevActiveSeat.get(tableId);
+  const phaseChanged = snapshot.phase !== prevPhase.get(tableId);
+
+  if (activeChanged || phaseChanged) {
+    const existing = turnTimers.get(tableId);
+    if (existing) {
+      clearTimeout(existing);
+      turnTimers.delete(tableId);
+    }
+  }
+
+  const timerSeat =
+    snapshot.phase === "PLAYER_TURNS" && snapshot.activeSeatIndex !== null
+      ? snapshot.seats.find((s) => s.seatIndex === snapshot.activeSeatIndex && !s.isNpc)
+      : null;
+
+  if (timerSeat && activeChanged) {
+    io.to(tableId).emit("turn_start", { seatIndex: timerSeat.seatIndex, timeoutSecs: 30 });
+    const timer = setTimeout(() => {
+      const r = rooms.get(tableId);
+      if (!r) return;
+      try {
+        r.playerAction(timerSeat.userId, "stand");
+      } catch {}
+      turnTimers.delete(tableId);
+    }, 30_000);
+    turnTimers.set(tableId, timer);
   }
 }
 
@@ -84,6 +178,12 @@ export function registerHandlers(io: Server, socket: Socket): void {
               });
             }
           }
+
+          driveBots(snapshot, tableId);
+          manageTurnTimer(snapshot, tableId, io);
+
+          prevPhase.set(tableId, snapshot.phase);
+          prevActiveSeat.set(tableId, snapshot.activeSeatIndex);
         });
         rooms.set(tableId, room);
       }
@@ -124,8 +224,8 @@ export function registerHandlers(io: Server, socket: Socket): void {
       return;
     }
     try {
+      room.fillBotsForStart();
       room.startGame();
-      // State change handler broadcasts automatically
     } catch (err) {
       socket.emit("error", { message: (err as Error).message });
     }
@@ -144,7 +244,6 @@ export function registerHandlers(io: Server, socket: Socket): void {
     }
     try {
       room.placeBet(currentUser.id, payload.amount);
-      // State change handler broadcasts automatically
     } catch (err) {
       socket.emit("error", { message: (err as Error).message });
     }
@@ -163,7 +262,6 @@ export function registerHandlers(io: Server, socket: Socket): void {
     }
     try {
       room.playerAction(currentUser.id, payload.type);
-      // State change handler broadcasts automatically
     } catch (err) {
       socket.emit("error", { message: (err as Error).message });
     }

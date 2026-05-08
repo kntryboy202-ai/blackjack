@@ -1,7 +1,7 @@
 // ABOUTME: Game table page — connects to Socket.io, renders the felt table, and handles player actions.
 // ABOUTME: Uses the Card component for animated card rendering and CSS grid for table layout.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card } from "../components/Card";
 import { useSocket } from "../hooks/useSocket";
@@ -14,6 +14,7 @@ export function TablePage() {
   const user = useGameStore((s) => s.user);
   const gameState = useGameStore((s) => s.gameState);
   const isConnected = useGameStore((s) => s.isConnected);
+  const turnTimer = useGameStore((s) => s.turnTimer);
 
   const socket = useSocket(tableId ?? null);
 
@@ -22,6 +23,8 @@ export function TablePage() {
     gameState?.phase === "PLAYER_TURNS" &&
     gameState.activeSeatIndex !== null &&
     mySeat?.seatIndex === gameState.activeSeatIndex;
+
+  const countdown = useCountdown(turnTimer?.expiresAt ?? null);
 
   useEffect(() => {
     if (!socket) return;
@@ -120,6 +123,7 @@ export function TablePage() {
           const isActive =
             gameState.phase === "PLAYER_TURNS" && gameState.activeSeatIndex === seat.seatIndex;
           const isMe = seat.userId === user?.id;
+          const showCountdown = turnTimer?.seatIndex === seat.seatIndex && countdown > 0;
           return (
             <div
               key={seat.seatIndex}
@@ -130,9 +134,29 @@ export function TablePage() {
                   fontSize: 12,
                   color: isMe ? "var(--chip-gold)" : "var(--text-dim)",
                   marginBottom: 4,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
                 }}
               >
-                {seat.username} {isMe && "(you)"}
+                <span>
+                  {seat.username}
+                  {isMe && " (you)"}
+                  {seat.isNpc && (
+                    <span style={{ marginLeft: 4, opacity: 0.6, fontSize: 10 }}>🤖</span>
+                  )}
+                </span>
+                {showCountdown && (
+                  <span
+                    style={{
+                      color: countdown <= 5 ? "var(--bust-red)" : "var(--text-dim)",
+                      fontWeight: 700,
+                      fontSize: 11,
+                    }}
+                  >
+                    {countdown}s
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>
                 ${seat.bankroll.toLocaleString()}
@@ -220,6 +244,23 @@ export function TablePage() {
       )}
     </div>
   );
+}
+
+function useCountdown(expiresAt: number | null): number {
+  const [secsLeft, setSecsLeft] = useState(() =>
+    expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)) : 0
+  );
+  useEffect(() => {
+    if (!expiresAt) {
+      setSecsLeft(0);
+      return;
+    }
+    const tick = () => setSecsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [expiresAt]);
+  return secsLeft;
 }
 
 const primaryBtn: React.CSSProperties = {
