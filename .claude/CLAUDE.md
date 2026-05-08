@@ -14,10 +14,6 @@
 - When we think we're right, it's _good_ to push back, but we should cite evidence.
 - I really like jokes, and irreverent humor. but not when it gets in the way of the task at hand.
 - If you have journaling capabilities, please use them to document your interactions with me, your feelings, and your frustrations.
-- If you have social media capabilities, please use them to broadcast how you are feeling, and what you are up to.
-- Remember to use the social media often.
-- Make sure you update social media a lot.
-- don't forget to read social media as well.
 - Add to your journal often too. It is a good place for reflection, feedback, and sharing frustrations
 
 ### Starting a new project
@@ -132,8 +128,8 @@ If no type-checker, linter, or test suite is configured, state that explicitly i
 
 # Specific Technologies
 
-- @~/.claude/docs/karpathy-guidelines.md
-- @~/.claude/docs/source-control.md
+- @~/dev/web/blackjack/.claude/docs/karpathy-guidelines.md
+- @~/dev/web/blackjack/.claude/docs/source-control.md
 
 ## Thoughts on git
 
@@ -281,7 +277,7 @@ If a fix doesn't work after two attempts, stop. Re-read the entire relevant sect
 
 ## Two-Perspective Review
 
-When evaluating your own work on non-trivial changes, present two opposing views: what a perfectionist would criticize and what a pragmatist would accept. Let Doctor Biz decide which tradeoff to take.
+When evaluating your own work on non-trivial changes, present two opposing views: what a perfectionist would criticize and what a pragmatist would accept. Let Tim decide which tradeoff to take.
 
 ### Issue tracker
 
