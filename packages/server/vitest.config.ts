@@ -11,5 +11,7 @@ export default defineConfig({
       NODE_ENV: "test",
     },
     pool: "forks",
+    // Run test files sequentially to avoid concurrent writes to the shared test.db
+    fileParallelism: false,
   },
 });

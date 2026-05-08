@@ -15,6 +15,8 @@ import "./config/passport.js";
 import { authRouter } from "./routes/auth.js";
 import { lobbyRouter } from "./routes/lobby.js";
 import { profileRouter } from "./routes/profile.js";
+import { registerHandlers } from "./socket/handlers.js";
+import { requireAuth } from "./socket/middleware.js";
 
 const SQLiteStore = ConnectSqlite3(session);
 
@@ -60,6 +62,12 @@ app.use(passport.session());
 io.engine.use(sessionMiddleware);
 io.engine.use(passport.initialize());
 io.engine.use(passport.session());
+
+// Socket.io auth middleware + connection handler
+io.use(requireAuth);
+io.on("connection", (socket) => {
+  registerHandlers(io, socket);
+});
 
 // Routes
 app.use("/api/auth", authRouter);
