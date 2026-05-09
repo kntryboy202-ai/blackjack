@@ -9,6 +9,7 @@ import type {
   HandOutcome,
   PlayerAction,
   PlayerSeat,
+  SplitHandState,
 } from "@blackjack/shared";
 import { Deck } from "./Deck.js";
 import { calculateHand } from "./Hand.js";
@@ -105,6 +106,8 @@ export class GameRoom {
       outcome: null,
       insuranceBet: 0,
       insuranceDeclined: false,
+      splitHand: null,
+      activeHandIndex: 0,
     });
     this.emit();
   }
@@ -127,6 +130,8 @@ export class GameRoom {
       outcome: null,
       insuranceBet: 0,
       insuranceDeclined: false,
+      splitHand: null,
+      activeHandIndex: 0,
     });
     // no emit — called before startGame
   }
@@ -183,6 +188,8 @@ export class GameRoom {
       seat.outcome = null;
       seat.insuranceBet = 0;
       seat.insuranceDeclined = false;
+      seat.splitHand = null;
+      seat.activeHandIndex = 0;
     }
     this.insurancePending = new Set();
     this.dealer = { hand: [], handValue: 0, isSoft: false };
@@ -233,6 +240,8 @@ export class GameRoom {
       seat.hasActed = false;
       seat.handValue = 0;
       seat.isSoft = false;
+      seat.splitHand = null;
+      seat.activeHandIndex = 0;
     }
 
     // First card to each player
@@ -373,14 +382,35 @@ export class GameRoom {
   }
 
   private advanceTurnIfNeeded(): void {
-    // Advance past seats that are already resolved (blackjack, busted, or acted)
+    // Advance past seats/hands that are already resolved (blackjack, busted, or acted).
+    // For split seats: first finish primary hand (activeHandIndex=0), then split hand (=1).
     while (this.activeSeatIndex !== null && this.activeSeatIndex < this.seats.length) {
       const seat = this.seats[this.activeSeatIndex];
       if (!seat) break;
-      if (seat.isBlackjack || seat.isBusted || seat.hasActed) {
-        this.activeSeatIndex++;
+
+      if (seat.splitHand !== null) {
+        if (seat.activeHandIndex === 0) {
+          if (seat.isBlackjack || seat.isBusted || seat.hasActed) {
+            // Primary hand done — switch to split hand
+            seat.activeHandIndex = 1;
+          }
+          // Whether we just switched or are still playing, stop and emit
+          break;
+        } else {
+          // Playing split hand (activeHandIndex === 1)
+          const sh = seat.splitHand;
+          if (sh.isBlackjack || sh.isBusted || sh.hasActed) {
+            this.activeSeatIndex++;
+          } else {
+            break;
+          }
+        }
       } else {
-        break;
+        if (seat.isBlackjack || seat.isBusted || seat.hasActed) {
+          this.activeSeatIndex++;
+        } else {
+          break;
+        }
       }
     }
 
@@ -396,10 +426,6 @@ export class GameRoom {
     if (this.phase !== "PLAYER_TURNS") {
       throw new Error(`Cannot act in phase ${this.phase}.`);
     }
-
-    if (action === "split") {
-      throw new Error(`Action "split" is not implemented.`);
-    }
     if (action === "insurance") {
       throw new Error(`Use placeInsurance() or declineInsurance() for insurance.`);
     }
@@ -412,69 +438,179 @@ export class GameRoom {
     const seat = this.seats[seatIdx];
     if (!seat) throw new Error(`Seat ${seatIdx} not found.`);
 
-    if (seat.isBusted) {
-      throw new Error(`${userId} is already busted.`);
+    // Determine which hand is currently active for this seat
+    const onSplitHand = seat.splitHand !== null && seat.activeHandIndex === 1;
+
+    if (action === "split") {
+      if (seat.splitHand !== null) {
+        throw new Error("Cannot split: seat has already split.");
+      }
+      const [card0, card1] = seat.hand;
+      if (!card0 || !card1 || seat.hand.length !== 2) {
+        throw new Error("Cannot split: need exactly two cards.");
+      }
+      if (card0.rank !== card1.rank) {
+        throw new Error("Cannot split: ranks must match.");
+      }
+      if (seat.isBlackjack) {
+        throw new Error("Cannot split a blackjack.");
+      }
+      if (seat.bankroll < seat.bet) {
+        throw new Error(
+          `Insufficient bankroll to split (need ${seat.bet}, have ${seat.bankroll}).`
+        );
+      }
+
+      // Escrow second bet
+      seat.bankroll -= seat.bet;
+
+      // Primary hand: keep card0, draw one more
+      const primaryExtra = this.deck.draw(false);
+      seat.hand = [card0, primaryExtra];
+      const primaryResult = calculateHand(seat.hand);
+      seat.handValue = primaryResult.value;
+      seat.isSoft = primaryResult.isSoft;
+      seat.isBusted = primaryResult.isBusted;
+      // Split hands can never be a natural blackjack
+      seat.isBlackjack = false;
+      seat.hasActed = false;
+
+      // Split hand: card1 + one more card
+      const splitExtra = this.deck.draw(false);
+      const splitCards = [card1, splitExtra];
+      const splitResult = calculateHand(splitCards);
+      const splitHand: SplitHandState = {
+        cards: splitCards,
+        value: splitResult.value,
+        isSoft: splitResult.isSoft,
+        isBusted: splitResult.isBusted,
+        isBlackjack: false, // split hands can never be natural blackjack
+        hasActed: false,
+        bet: seat.bet, // matches primary bet (already doubled by escrow above)
+        outcome: null,
+      };
+      seat.splitHand = splitHand;
+      seat.activeHandIndex = 0; // play primary hand first
+
+      this.emit();
+      return;
     }
 
     if (action === "surrender") {
-      // Surrender is only valid as the first action (2-card hand, no hits taken)
+      if (onSplitHand) {
+        throw new Error("Surrender is not allowed on a split hand.");
+      }
       if (seat.hand.length !== 2) {
         throw new Error("Surrender is only allowed on the initial two-card hand.");
       }
       seat.outcome = "surrender";
-      // Half the escrowed bet is returned; the other half is lost
       seat.bankroll += Math.floor(seat.bet / 2);
       seat.hasActed = true;
-      this.activeSeatIndex = seatIdx + 1;
-      this.emit();
-      this.advanceTurnIfNeeded();
-    } else if (action === "double") {
-      if (seat.hand.length !== 2 || seat.isBlackjack) {
-        throw new Error(
-          "Double down is only allowed on the initial two-card hand (not blackjack)."
-        );
-      }
-      if (seat.bankroll < seat.bet) {
-        throw new Error(
-          `Insufficient bankroll to double down (need ${seat.bet}, have ${seat.bankroll}).`
-        );
-      }
-      // Escrow an additional bet equal to the original bet
-      seat.bankroll -= seat.bet;
-      seat.bet *= 2;
-      // Draw exactly one card
-      seat.hand.push(this.deck.draw(false));
-      const result = calculateHand(seat.hand);
-      seat.handValue = result.value;
-      seat.isSoft = result.isSoft;
-      seat.isBusted = result.isBusted;
-      seat.isBlackjack = result.isBlackjack;
-      seat.hasActed = true;
-      this.activeSeatIndex = seatIdx + 1;
-      this.emit();
-      this.advanceTurnIfNeeded();
-    } else if (action === "hit") {
-      seat.hand.push(this.deck.draw(false));
-      const result = calculateHand(seat.hand);
-      seat.handValue = result.value;
-      seat.isSoft = result.isSoft;
-      seat.isBusted = result.isBusted;
-      seat.isBlackjack = result.isBlackjack;
-
-      if (seat.isBusted) {
-        // Auto-advance to next player
-        this.activeSeatIndex = seatIdx + 1;
-        this.emit();
-        this.advanceTurnIfNeeded();
-        return;
-      }
-      this.emit();
-    } else if (action === "stand") {
-      seat.hasActed = true;
-      this.activeSeatIndex = seatIdx + 1;
-      this.emit();
-      this.advanceTurnIfNeeded();
+      this.advanceAfterHandAction(seatIdx, onSplitHand);
+      return;
     }
+
+    if (action === "double") {
+      if (onSplitHand) {
+        const sh = seat.splitHand!;
+        if (sh.cards.length !== 2) {
+          throw new Error("Double down is only allowed on a two-card split hand.");
+        }
+        if (seat.bankroll < sh.bet) {
+          throw new Error(
+            `Insufficient bankroll to double split hand (need ${sh.bet}, have ${seat.bankroll}).`
+          );
+        }
+        seat.bankroll -= sh.bet;
+        sh.bet *= 2;
+        sh.cards.push(this.deck.draw(false));
+        const r = calculateHand(sh.cards);
+        sh.value = r.value;
+        sh.isSoft = r.isSoft;
+        sh.isBusted = r.isBusted;
+        sh.isBlackjack = false;
+        sh.hasActed = true;
+      } else {
+        if (seat.hand.length !== 2 || seat.isBlackjack) {
+          throw new Error(
+            "Double down is only allowed on the initial two-card hand (not blackjack)."
+          );
+        }
+        if (seat.bankroll < seat.bet) {
+          throw new Error(
+            `Insufficient bankroll to double down (need ${seat.bet}, have ${seat.bankroll}).`
+          );
+        }
+        seat.bankroll -= seat.bet;
+        seat.bet *= 2;
+        seat.hand.push(this.deck.draw(false));
+        const r = calculateHand(seat.hand);
+        seat.handValue = r.value;
+        seat.isSoft = r.isSoft;
+        seat.isBusted = r.isBusted;
+        seat.isBlackjack = r.isBlackjack;
+        seat.hasActed = true;
+      }
+      this.advanceAfterHandAction(seatIdx, onSplitHand);
+      return;
+    }
+
+    if (action === "hit") {
+      if (onSplitHand) {
+        const sh = seat.splitHand!;
+        if (sh.isBusted) throw new Error("Split hand is already busted.");
+        sh.cards.push(this.deck.draw(false));
+        const r = calculateHand(sh.cards);
+        sh.value = r.value;
+        sh.isSoft = r.isSoft;
+        sh.isBusted = r.isBusted;
+        sh.isBlackjack = false;
+        if (sh.isBusted) {
+          this.emit();
+          this.advanceTurnIfNeeded();
+          return;
+        }
+      } else {
+        if (seat.isBusted) throw new Error(`${userId} is already busted.`);
+        seat.hand.push(this.deck.draw(false));
+        const r = calculateHand(seat.hand);
+        seat.handValue = r.value;
+        seat.isSoft = r.isSoft;
+        seat.isBusted = r.isBusted;
+        seat.isBlackjack = r.isBlackjack;
+        if (seat.isBusted) {
+          this.emit();
+          this.advanceTurnIfNeeded();
+          return;
+        }
+      }
+      this.emit();
+      return;
+    }
+
+    if (action === "stand") {
+      if (onSplitHand) {
+        seat.splitHand!.hasActed = true;
+      } else {
+        seat.hasActed = true;
+      }
+      this.advanceAfterHandAction(seatIdx, onSplitHand);
+    }
+  }
+
+  // After completing a hand action (stand/double/surrender/bust-already-handled),
+  // decide whether to advance to the split hand or to the next seat.
+  private advanceAfterHandAction(seatIdx: number, onSplitHand: boolean): void {
+    const seat = this.seats[seatIdx];
+    // If we just finished the primary hand and a split hand exists, don't pre-increment —
+    // advanceTurnIfNeeded will switch activeHandIndex to 1 and stay on this seat.
+    if (!onSplitHand && seat?.splitHand !== null) {
+      // Stay on this seat; advanceTurnIfNeeded handles the transition
+    } else {
+      this.activeSeatIndex = seatIdx + 1;
+    }
+    this.emit();
+    this.advanceTurnIfNeeded();
   }
 
   private runDealerTurn(): void {
@@ -515,30 +651,40 @@ export class GameRoom {
       const playerResult = calculateHand(seat.hand);
       const outcome = resolveHand(playerResult, dealerResult);
       seat.outcome = outcome;
+      this.applyPayout(seat, outcome, seat.bet);
 
-      // Apply bankroll changes based on outcome.
-      // Main bet was already escrowed (deducted from bankroll at placeBet time).
-      switch (outcome) {
-        case "win":
-          seat.bankroll += seat.bet * 2;
-          break;
-        case "blackjack":
-          seat.bankroll += seat.bet + Math.floor(seat.bet * 1.5);
-          break;
-        case "push":
-          seat.bankroll += seat.bet;
-          break;
-        case "loss":
-          // Bet already gone — no return
-          break;
-        case "surrender":
-          // Should not reach here (handled above), but included for exhaustiveness
-          seat.bankroll += Math.floor(seat.bet / 2);
-          break;
+      // Resolve split hand independently if it exists
+      if (seat.splitHand !== null) {
+        const splitResult = calculateHand(seat.splitHand.cards);
+        // Split-hand 21 is not a natural blackjack — override isBlackjack to false
+        const splitHandResult = { ...splitResult, isBlackjack: false };
+        const splitOutcome = resolveHand(splitHandResult, dealerResult);
+        seat.splitHand.outcome = splitOutcome;
+        this.applyPayout(seat, splitOutcome, seat.splitHand.bet);
       }
     }
 
     this.emit();
+  }
+
+  private applyPayout(seat: InternalSeat, outcome: HandOutcome, bet: number): void {
+    switch (outcome) {
+      case "win":
+        seat.bankroll += bet * 2;
+        break;
+      case "blackjack":
+        seat.bankroll += bet + Math.floor(bet * 1.5);
+        break;
+      case "push":
+        seat.bankroll += bet;
+        break;
+      case "loss":
+        // Bet already escrowed — nothing to return
+        break;
+      case "surrender":
+        seat.bankroll += Math.floor(bet / 2);
+        break;
+    }
   }
 
   nextRound(): void {
@@ -556,6 +702,8 @@ export class GameRoom {
       seat.outcome = null;
       seat.insuranceBet = 0;
       seat.insuranceDeclined = false;
+      seat.splitHand = null;
+      seat.activeHandIndex = 0;
     }
     this.insurancePending = new Set();
     this.dealer = { hand: [], handValue: 0, isSoft: false };
@@ -591,6 +739,23 @@ export class GameRoom {
           isNpc: seat.isNpc,
           outcome: seat.outcome,
           insuranceBet: seat.insuranceBet,
+          activeHandIndex: seat.activeHandIndex,
+          splitHand: seat.splitHand
+            ? {
+                cards: seat.splitHand.cards.map((c) => ({
+                  suit: c.suit,
+                  rank: c.rank,
+                  faceDown: c.faceDown,
+                })),
+                value: seat.splitHand.value,
+                isSoft: seat.splitHand.isSoft,
+                isBusted: seat.splitHand.isBusted,
+                isBlackjack: seat.splitHand.isBlackjack,
+                hasActed: seat.splitHand.hasActed,
+                bet: seat.splitHand.bet,
+                outcome: seat.splitHand.outcome,
+              }
+            : null,
         })),
         dealer: {
           hand: this.dealer.hand.map((c) => ({

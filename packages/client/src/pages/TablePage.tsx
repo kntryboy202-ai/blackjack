@@ -26,7 +26,7 @@ export function TablePage() {
 
   const countdown = useCountdown(turnTimer?.expiresAt ?? null);
 
-  function handleAction(type: "hit" | "stand" | "double" | "surrender") {
+  function handleAction(type: "hit" | "stand" | "double" | "split" | "surrender") {
     socket?.emit("action", { type });
   }
 
@@ -165,29 +165,82 @@ export function TablePage() {
                   <span style={{ color: "var(--chip-gold)", marginLeft: 6 }}>bet: ${seat.bet}</span>
                 )}
               </div>
-              <div style={{ marginBottom: 4 }}>
-                {seat.hand.map((c, i) => (
-                  <Card
-                    key={`${c.suit}-${c.rank}`}
-                    suit={c.suit}
-                    rank={c.rank}
-                    faceDown={c.faceDown}
-                    dealIndex={seat.seatIndex * 2 + i}
-                  />
-                ))}
-              </div>
-              {seat.handValue > 0 && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: seat.isBusted ? "var(--bust-red)" : "var(--text-primary)",
-                  }}
-                >
-                  {seat.handValue}
-                  {seat.isBusted && " BUST"}
-                  {seat.isBlackjack && " BJ!"}
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                {/* Primary hand */}
+                <div>
+                  <div style={{ marginBottom: 4 }}>
+                    {seat.hand.map((c, i) => (
+                      <Card
+                        key={`${c.suit}-${c.rank}-primary`}
+                        suit={c.suit}
+                        rank={c.rank}
+                        faceDown={c.faceDown}
+                        dealIndex={seat.seatIndex * 2 + i}
+                      />
+                    ))}
+                  </div>
+                  {seat.handValue > 0 && (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: seat.isBusted ? "var(--bust-red)" : "var(--text-primary)",
+                        outline:
+                          seat.splitHand !== null && seat.activeHandIndex === 0 && isActive
+                            ? "1px solid var(--chip-gold)"
+                            : "none",
+                      }}
+                    >
+                      {seat.handValue}
+                      {seat.isBusted && " BUST"}
+                      {seat.isBlackjack && " BJ!"}
+                      {seat.splitHand !== null && seat.bet > 0 && (
+                        <span style={{ color: "var(--text-dim)", marginLeft: 4 }}>
+                          (${seat.bet})
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Split hand (shown only when split has occurred) */}
+                {seat.splitHand !== null && (
+                  <div style={{ borderLeft: "1px dashed var(--text-dim)", paddingLeft: 8 }}>
+                    <div style={{ marginBottom: 4 }}>
+                      {seat.splitHand.cards.map((c, i) => (
+                        <Card
+                          key={`${c.suit}-${c.rank}-split`}
+                          suit={c.suit}
+                          rank={c.rank}
+                          faceDown={c.faceDown}
+                          dealIndex={seat.seatIndex * 2 + 10 + i}
+                        />
+                      ))}
+                    </div>
+                    {seat.splitHand.value > 0 && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: seat.splitHand.isBusted
+                            ? "var(--bust-red)"
+                            : "var(--text-primary)",
+                          outline:
+                            seat.activeHandIndex === 1 && isActive
+                              ? "1px solid var(--chip-gold)"
+                              : "none",
+                        }}
+                      >
+                        {seat.splitHand.value}
+                        {seat.splitHand.isBusted && " BUST"}
+                        {seat.splitHand.bet > 0 && (
+                          <span style={{ color: "var(--text-dim)", marginLeft: 4 }}>
+                            (${seat.splitHand.bet})
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
@@ -225,7 +278,7 @@ export function TablePage() {
           />
         )}
 
-        {isMyTurn && (
+        {isMyTurn && mySeat && (
           <>
             <button type="button" onClick={() => handleAction("hit")} style={primaryBtn}>
               Hit
@@ -233,15 +286,32 @@ export function TablePage() {
             <button type="button" onClick={() => handleAction("stand")} style={secondaryBtn}>
               Stand
             </button>
-            {mySeat &&
+            {/* Split — only on primary hand with matching ranks, no prior split, sufficient funds */}
+            {mySeat.splitHand === null &&
               mySeat.hand.length === 2 &&
               !mySeat.isBlackjack &&
+              mySeat.hand[0]?.rank === mySeat.hand[1]?.rank &&
               mySeat.bankroll >= mySeat.bet && (
+                <button type="button" onClick={() => handleAction("split")} style={secondaryBtn}>
+                  Split
+                </button>
+              )}
+            {/* Double — primary hand or split hand, initial two cards only */}
+            {(() => {
+              const onSplitHand = mySeat.splitHand !== null && mySeat.activeHandIndex === 1;
+              const activeHand = onSplitHand ? mySeat.splitHand! : null;
+              const twoCards = onSplitHand
+                ? activeHand!.cards.length === 2
+                : mySeat.hand.length === 2 && !mySeat.isBlackjack;
+              const activeBet = onSplitHand ? activeHand!.bet : mySeat.bet;
+              return twoCards && mySeat.bankroll >= activeBet ? (
                 <button type="button" onClick={() => handleAction("double")} style={secondaryBtn}>
                   Double
                 </button>
-              )}
-            {mySeat && mySeat.hand.length === 2 && !mySeat.isBlackjack && (
+              ) : null;
+            })()}
+            {/* Surrender — only on primary hand (not split hand) */}
+            {mySeat.activeHandIndex === 0 && mySeat.hand.length === 2 && !mySeat.isBlackjack && (
               <button type="button" onClick={() => handleAction("surrender")} style={dangerBtn}>
                 Surrender
               </button>

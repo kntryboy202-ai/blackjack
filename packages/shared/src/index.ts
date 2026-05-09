@@ -22,6 +22,17 @@ export type GamePhase =
 
 export type HandOutcome = "win" | "loss" | "push" | "blackjack" | "surrender";
 
+export interface SplitHandState {
+  cards: Card[];
+  value: number;
+  isSoft: boolean;
+  isBusted: boolean;
+  isBlackjack: boolean;
+  hasActed: boolean;
+  bet: number;
+  outcome: HandOutcome | null;
+}
+
 export type PlayerAction = "hit" | "stand" | "double" | "split" | "insurance" | "surrender";
 
 export interface PlayerSeat {
@@ -39,6 +50,8 @@ export interface PlayerSeat {
   isNpc: boolean;
   outcome?: HandOutcome | null;
   insuranceBet: number;
+  splitHand: SplitHandState | null;
+  activeHandIndex: number;
 }
 
 export interface DealerState {

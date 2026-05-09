@@ -258,10 +258,6 @@ describe("GameRoom — player turns", () => {
     expect(() => room.playerAction("u2", "hit")).toThrow();
   });
 
-  it("split throws 'not implemented'", () => {
-    expect(() => room.playerAction("u1", "split")).toThrow(/not implemented/i);
-  });
-
   it("after all players stand/bust, dealer runs and phase advances past DEALER_TURN", () => {
     room.playerAction("u1", "stand");
     // Dealer runs synchronously, so final snapshot is RESOLVE or ROUND_END
@@ -904,6 +900,205 @@ describe("GameRoom — insurance", () => {
     // Only u1 (human) needs to respond; declining moves the phase
     room.declineInsurance("u1");
     expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Split
+// ---------------------------------------------------------------------------
+
+describe("GameRoom — split", () => {
+  // Deal order: player card[0], dealer card[1], player card[2], dealer hole card[3]
+  // After split: primary draws card[4], split hand draws card[5]
+  function makeSplitDeck(extra: Card[] = []): Deck {
+    const cards: Card[] = [
+      { suit: "spades", rank: "K", faceDown: false }, // player 1st
+      { suit: "hearts", rank: "6", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "clubs", rank: "K", faceDown: false }, // player 2nd — matching rank
+      { suit: "diamonds", rank: "8", faceDown: false }, // dealer hole → 6+8=14
+      { suit: "hearts", rank: "7", faceDown: false }, // primary after split → K+7=17
+      { suit: "clubs", rank: "9", faceDown: false }, // split hand → K+9=19
+      { suit: "spades", rank: "K", faceDown: false }, // dealer hit → 14+K=24 (bust)
+      ...extra,
+    ];
+    return buildDeckWithCards(cards);
+  }
+
+  function makeRoomWithSplitDeck(bankroll = 1000, bet = 100): GameRoom {
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 10, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = makeSplitDeck();
+    room.addPlayer("u1", "Alice", bankroll, "sock-1");
+    room.startGame();
+    room.placeBet("u1", bet);
+    return room;
+  }
+
+  it("split creates two hands from a matching-rank pair", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    const snap = room.getSnapshot();
+    const seat = snap.seats[0]!;
+
+    // Primary: K + 7 = 17
+    expect(seat.hand).toHaveLength(2);
+    expect(seat.hand[0]!.rank).toBe("K");
+    expect(seat.hand[1]!.rank).toBe("7");
+    expect(seat.handValue).toBe(17);
+
+    // Split hand: K + 9 = 19
+    expect(seat.splitHand).not.toBeNull();
+    expect(seat.splitHand!.cards).toHaveLength(2);
+    expect(seat.splitHand!.cards[0]!.rank).toBe("K");
+    expect(seat.splitHand!.cards[1]!.rank).toBe("9");
+    expect(seat.splitHand!.value).toBe(19);
+
+    // Second bet escrowed
+    expect(seat.bankroll).toBe(800); // 1000 - 100 (main) - 100 (split)
+
+    // Still on primary hand
+    expect(seat.activeHandIndex).toBe(0);
+    expect(snap.activeSeatIndex).toBe(0);
+  });
+
+  it("split rejects non-matching ranks", () => {
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: "7", faceDown: false }, // different rank
+      { suit: "diamonds", rank: "8", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 100);
+    expect(() => room.playerAction("u1", "split")).toThrow(/ranks must match/i);
+  });
+
+  it("split rejects when bankroll is insufficient for second bet", () => {
+    // bankroll=100, bet=100 → bankroll hits 0 after escrow → can't cover split
+    const room = makeRoomWithSplitDeck(100, 100);
+    expect(() => room.playerAction("u1", "split")).toThrow(/insufficient bankroll/i);
+  });
+
+  it("cannot split after already splitting (no re-split)", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    expect(() => room.playerAction("u1", "split")).toThrow(/already split/i);
+  });
+
+  it("cannot surrender on a split hand", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "stand"); // finish primary hand
+    // Now on split hand (activeHandIndex=1)
+    expect(() => room.playerAction("u1", "surrender")).toThrow(/surrender.*split/i);
+  });
+
+  it("stand on primary split hand transitions to split hand (activeHandIndex=1)", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "stand"); // stand on primary
+
+    const snap = room.getSnapshot();
+    const seat = snap.seats[0]!;
+    expect(snap.activeSeatIndex).toBe(0); // still same seat
+    expect(seat.activeHandIndex).toBe(1); // now on split hand
+    expect(seat.hasActed).toBe(true);
+    expect(seat.splitHand!.hasActed).toBe(false);
+  });
+
+  it("stand on split hand advances to dealer turn (solo player)", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "stand"); // stand primary
+    room.playerAction("u1", "stand"); // stand split hand
+
+    const snap = room.getSnapshot();
+    expect(["DEALER_TURN", "RESOLVE"]).toContain(snap.phase);
+  });
+
+  it("bust on primary split hand transitions to split hand", () => {
+    // Primary will bust: K + 7 = 17, hit K → 27
+    const cards: Card[] = [
+      { suit: "spades", rank: "K", faceDown: false }, // player 1st
+      { suit: "hearts", rank: "6", faceDown: false }, // dealer upcard
+      { suit: "clubs", rank: "K", faceDown: false }, // player 2nd
+      { suit: "diamonds", rank: "8", faceDown: false }, // dealer hole
+      { suit: "hearts", rank: "7", faceDown: false }, // primary → K+7=17
+      { suit: "clubs", rank: "3", faceDown: false }, // split → K+3=13
+      { suit: "spades", rank: "K", faceDown: false }, // primary hit → 17+K=27 bust
+      { suit: "hearts", rank: "K", faceDown: false }, // dealer hit → 14+K=24 bust
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 10, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 100);
+
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "hit"); // primary: 17+K=27, bust
+
+    const snap = room.getSnapshot();
+    const seat = snap.seats[0]!;
+    expect(seat.isBusted).toBe(true);
+    expect(snap.activeSeatIndex).toBe(0); // still seat 0
+    expect(seat.activeHandIndex).toBe(1); // switched to split hand
+  });
+
+  it("resolve pays both split hands independently when dealer busts", () => {
+    const room = makeRoomWithSplitDeck();
+    // Primary: K+7=17 (stand), Split: K+9=19 (stand), Dealer: 6+8=14 → hits K=24 bust
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "stand"); // stand primary (17)
+    room.playerAction("u1", "stand"); // stand split (19)
+
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    const seat = snap.seats[0]!;
+
+    expect(seat.outcome).toBe("win"); // primary wins (dealer bust)
+    expect(seat.splitHand!.outcome).toBe("win"); // split hand wins (dealer bust)
+
+    // 1000 - 100 (main escrow) - 100 (split escrow) = 800
+    // +200 primary win + 200 split win = 1200
+    expect(seat.bankroll).toBe(1200);
+  });
+
+  it("split hand isBlackjack is always false (split 21 pays 1:1 not 3:2)", () => {
+    // Give player A+A → split → A + K on primary (21 but not blackjack)
+    const cards: Card[] = [
+      { suit: "spades", rank: "A", faceDown: false }, // player 1st
+      { suit: "hearts", rank: "6", faceDown: false }, // dealer upcard
+      { suit: "clubs", rank: "A", faceDown: false }, // player 2nd
+      { suit: "diamonds", rank: "8", faceDown: false }, // dealer hole
+      { suit: "hearts", rank: "K", faceDown: false }, // primary → A+K=21 (not BJ)
+      { suit: "clubs", rank: "9", faceDown: false }, // split → A+9=20
+      { suit: "spades", rank: "K", faceDown: false }, // dealer hit
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 10, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 100);
+
+    room.playerAction("u1", "split");
+    const snap = room.getSnapshot();
+    expect(snap.seats[0]!.isBlackjack).toBe(false); // A+K on split = 21 but not BJ
+    expect(snap.seats[0]!.splitHand!.isBlackjack).toBe(false);
+  });
+
+  it("nextRound clears splitHand and resets activeHandIndex", () => {
+    const room = makeRoomWithSplitDeck();
+    room.playerAction("u1", "split");
+    room.playerAction("u1", "stand");
+    room.playerAction("u1", "stand");
+    room.nextRound();
+
+    const snap = room.getSnapshot();
+    const seat = snap.seats[0]!;
+    expect(seat.splitHand).toBeNull();
+    expect(seat.activeHandIndex).toBe(0);
   });
 });
 

@@ -52,7 +52,22 @@ async function persistResolvedRound(snapshot: GameRoomState, _tableId: string): 
       },
     });
 
-    // seat.bankroll in the RESOLVE snapshot already reflects payout — persist as-is
+    // Persist split hand as a separate HandRecord if it exists
+    if (seat.splitHand?.outcome) {
+      await db.handRecord.create({
+        data: {
+          sessionId,
+          userId: seat.userId,
+          betAmount: seat.splitHand.bet,
+          outcome: seat.splitHand.outcome,
+          playerCards: JSON.stringify(seat.splitHand.cards),
+          dealerCards: JSON.stringify(snapshot.dealer.hand),
+          actions: "[]",
+        },
+      });
+    }
+
+    // seat.bankroll in the RESOLVE snapshot already reflects both payouts — persist as-is
     await db.user.update({
       where: { id: seat.userId },
       data: { bankroll: seat.bankroll },
