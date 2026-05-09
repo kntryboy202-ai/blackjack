@@ -440,12 +440,12 @@ POST   /api/profile/refill        # Claim free bankroll refill
 - [x] 30-second turn timer with auto-stand on expiry
 - [x] Client-side countdown per active human seat (turns red at ≤5s)
 
-### Phase 4 — Full Player Actions
+### Phase 4 — Advanced Player Actions ✅ Shipped (partial)
 
+- [x] Double down (double bet, one card, auto-stand)
+- [x] Surrender (forfeit hand, recover half bet)
+- [x] Insurance (side bet when dealer shows Ace; NPC bots excluded)
 - [ ] Split (matching rank pairs → two independent hands)
-- [ ] Double down (double bet, one card, auto-stand)
-- [ ] Surrender (forfeit hand, recover half bet)
-- [ ] Insurance (side bet when dealer shows Ace)
 
 ### Phase 5 — Profile & History
 

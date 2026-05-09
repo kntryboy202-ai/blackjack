@@ -26,15 +26,16 @@ export function TablePage() {
 
   const countdown = useCountdown(turnTimer?.expiresAt ?? null);
 
-  useEffect(() => {
-    if (!socket) return;
-    if (gameState?.phase === "CHECK_INSURANCE") {
-      socket.emit("skip_insurance");
-    }
-  }, [socket, gameState?.phase]);
-
-  function handleAction(type: "hit" | "stand") {
+  function handleAction(type: "hit" | "stand" | "double" | "surrender") {
     socket?.emit("action", { type });
+  }
+
+  function handlePlaceInsurance(amount: number) {
+    socket?.emit("place_insurance", { amount });
+  }
+
+  function handleDeclineInsurance() {
+    socket?.emit("decline_insurance");
   }
 
   function handleStartGame() {
@@ -215,8 +216,13 @@ export function TablePage() {
             </button>
           ))}
 
-        {gameState?.phase === "CHECK_INSURANCE" && (
-          <div style={{ color: "var(--text-dim)", fontSize: 14 }}>Auto-declining insurance...</div>
+        {gameState?.phase === "CHECK_INSURANCE" && mySeat && (
+          <InsurancePanel
+            bet={mySeat.bet}
+            bankroll={mySeat.bankroll}
+            onAccept={handlePlaceInsurance}
+            onDecline={handleDeclineInsurance}
+          />
         )}
 
         {isMyTurn && (
@@ -227,6 +233,19 @@ export function TablePage() {
             <button type="button" onClick={() => handleAction("stand")} style={secondaryBtn}>
               Stand
             </button>
+            {mySeat &&
+              mySeat.hand.length === 2 &&
+              !mySeat.isBlackjack &&
+              mySeat.bankroll >= mySeat.bet && (
+                <button type="button" onClick={() => handleAction("double")} style={secondaryBtn}>
+                  Double
+                </button>
+              )}
+            {mySeat && mySeat.hand.length === 2 && !mySeat.isBlackjack && (
+              <button type="button" onClick={() => handleAction("surrender")} style={dangerBtn}>
+                Surrender
+              </button>
+            )}
           </>
         )}
 
@@ -282,3 +301,66 @@ const secondaryBtn: React.CSSProperties = {
   fontWeight: 700,
   fontSize: 16,
 };
+
+const dangerBtn: React.CSSProperties = {
+  padding: "10px 24px",
+  background: "transparent",
+  color: "var(--bust-red)",
+  border: "2px solid var(--bust-red)",
+  borderRadius: 6,
+  fontWeight: 700,
+  fontSize: 16,
+};
+
+interface InsurancePanelProps {
+  bet: number;
+  bankroll: number;
+  onAccept: (amount: number) => void;
+  onDecline: () => void;
+}
+
+function InsurancePanel({ bet, bankroll, onAccept, onDecline }: InsurancePanelProps) {
+  const maxInsurance = Math.floor(bet / 2);
+  const [amount, setAmount] = useState(maxInsurance);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <div style={{ color: "var(--chip-gold)", fontWeight: 600, fontSize: 14 }}>
+        Dealer shows Ace — Insurance?
+      </div>
+      <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
+        Max bet: ${maxInsurance} (half your ${bet} wager)
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          type="number"
+          min={1}
+          max={maxInsurance}
+          value={amount}
+          onChange={(e) => setAmount(Math.min(maxInsurance, Math.max(1, Number(e.target.value))))}
+          style={{
+            width: 64,
+            padding: "6px 8px",
+            background: "var(--felt-mid)",
+            border: "1px solid var(--text-dim)",
+            borderRadius: 4,
+            color: "var(--text-primary)",
+            fontSize: 14,
+            textAlign: "center",
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => onAccept(amount)}
+          disabled={amount < 1 || amount > maxInsurance || amount > bankroll}
+          style={primaryBtn}
+        >
+          Take Insurance
+        </button>
+        <button type="button" onClick={onDecline} style={secondaryBtn}>
+          No Insurance
+        </button>
+      </div>
+    </div>
+  );
+}

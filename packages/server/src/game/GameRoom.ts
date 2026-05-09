@@ -43,9 +43,10 @@ interface GameRoomConfig {
   maxBet: number;
 }
 
-// Internal seat tracks outcome separately from the shared PlayerSeat type
+// Internal seat tracks outcome and insurance state (insuranceDeclined is server-only)
 interface InternalSeat extends PlayerSeat {
   outcome: HandOutcome | null;
+  insuranceDeclined: boolean;
 }
 
 export class GameRoom {
@@ -53,6 +54,7 @@ export class GameRoom {
   private readonly config: GameRoomConfig;
   protected deck: Deck;
   private seats: InternalSeat[];
+  private insurancePending: Set<string>;
   private dealer: DealerState;
   private phase: GamePhase;
   private activeSeatIndex: number | null;
@@ -64,6 +66,7 @@ export class GameRoom {
     this.config = config;
     this.deck = new Deck(config.deckCount);
     this.seats = [];
+    this.insurancePending = new Set();
     this.dealer = { hand: [], handValue: 0, isSoft: false };
     this.phase = "WAITING_FOR_PLAYERS";
     this.activeSeatIndex = null;
@@ -100,6 +103,8 @@ export class GameRoom {
       hasActed: false,
       isNpc: false,
       outcome: null,
+      insuranceBet: 0,
+      insuranceDeclined: false,
     });
     this.emit();
   }
@@ -120,6 +125,8 @@ export class GameRoom {
       hasActed: false,
       isNpc: true,
       outcome: null,
+      insuranceBet: 0,
+      insuranceDeclined: false,
     });
     // no emit — called before startGame
   }
@@ -164,7 +171,7 @@ export class GameRoom {
       throw new Error("Cannot start game with no players.");
     }
     this.phase = "PLACE_BETS";
-    // Reset hands and bets for a fresh round
+    // Reset hands, bets, and insurance state for a fresh round
     for (const seat of this.seats) {
       seat.hand = [];
       seat.bet = 0;
@@ -174,7 +181,10 @@ export class GameRoom {
       seat.isBlackjack = false;
       seat.hasActed = false;
       seat.outcome = null;
+      seat.insuranceBet = 0;
+      seat.insuranceDeclined = false;
     }
+    this.insurancePending = new Set();
     this.dealer = { hand: [], handValue: 0, isSoft: false };
     this.activeSeatIndex = null;
     this.emit();
@@ -257,6 +267,13 @@ export class GameRoom {
     const dealerUpcard = this.dealer.hand[0];
     if (dealerUpcard?.rank === "A") {
       this.phase = "CHECK_INSURANCE";
+      // Only human (non-NPC) players respond to insurance; bots never block the transition
+      this.insurancePending = new Set(this.seats.filter((s) => !s.isNpc).map((s) => s.userId));
+      if (this.insurancePending.size === 0) {
+        // All bots — skip straight through
+        this.processInsuranceBets();
+        return;
+      }
       this.emit();
       return;
     }
@@ -264,25 +281,99 @@ export class GameRoom {
     this.startPlayerTurns();
   }
 
-  // Phase 1: all players decline insurance — full insurance betting is Phase 2.
+  // Decline insurance for a specific human player and advance when all have responded.
+  declineInsurance(userId: string): void {
+    if (this.phase !== "CHECK_INSURANCE") {
+      throw new Error(`Cannot decline insurance in phase ${this.phase}.`);
+    }
+    const seat = this.seats.find((s) => s.userId === userId);
+    if (seat) {
+      seat.insuranceDeclined = true;
+    }
+    this.insurancePending.delete(userId);
+    if (this.insurancePending.size === 0) {
+      this.processInsuranceBets();
+    } else {
+      this.emit();
+    }
+  }
+
+  // Place an insurance side-bet (up to half the main bet) for a human player.
+  placeInsurance(userId: string, amount: number): void {
+    if (this.phase !== "CHECK_INSURANCE") {
+      throw new Error(`Cannot place insurance in phase ${this.phase}.`);
+    }
+    const seat = this.seats.find((s) => s.userId === userId);
+    if (!seat) throw new Error(`User ${userId} not at this table.`);
+
+    const maxInsurance = Math.floor(seat.bet / 2);
+    if (amount > maxInsurance) {
+      throw new Error(
+        `Insurance bet ${amount} exceeds max allowed ${maxInsurance} (half of main bet).`
+      );
+    }
+    if (amount > seat.bankroll) {
+      throw new Error(`Insurance bet ${amount} exceeds bankroll ${seat.bankroll}.`);
+    }
+
+    seat.insuranceBet = amount;
+    seat.bankroll -= amount;
+
+    this.insurancePending.delete(userId);
+    if (this.insurancePending.size === 0) {
+      this.processInsuranceBets();
+    } else {
+      this.emit();
+    }
+  }
+
+  // Convenience: all pending human players decline — used by existing tests and edge-case skipping.
   skipInsurance(): void {
     if (this.phase !== "CHECK_INSURANCE") {
       throw new Error(`Cannot skip insurance in phase ${this.phase}.`);
     }
-    this.startPlayerTurns();
+    this.insurancePending.clear();
+    this.processInsuranceBets();
+  }
+
+  // Called when all human players have responded; peeks at hole card and pays out insurance.
+  private processInsuranceBets(): void {
+    const dealerHasBJ = this.peekDealerBlackjack();
+
+    if (dealerHasBJ) {
+      // Pay insurance winners 2:1 before resolving the main hand
+      for (const seat of this.seats) {
+        if (seat.insuranceBet > 0) {
+          // Return the insurance bet plus 2x profit
+          seat.bankroll += seat.insuranceBet * 3;
+        }
+      }
+      // Skip player turns — dealer BJ ends the round immediately
+      this.runDealerTurn();
+    } else {
+      // Insurance bets are already deducted and are now lost
+      this.startPlayerTurns();
+    }
+  }
+
+  // Returns true when the dealer holds a blackjack (Ace upcard + 10-value hole card).
+  // Peeks at the hole card rank directly since it is face-down and excluded from calculateHand.
+  private peekDealerBlackjack(): boolean {
+    const holeCard = this.dealer.hand[1];
+    if (!holeCard) return false;
+    const r = holeCard.rank;
+    return r === "10" || r === "J" || r === "Q" || r === "K";
   }
 
   private startPlayerTurns(): void {
     this.phase = "PLAYER_TURNS";
     this.activeSeatIndex = 0;
-    this.emit();
-
-    // Advance past any already-resolved seats (e.g. blackjack)
+    // Don't emit before advancing — advanceTurnIfNeeded emits the settled state
     this.advanceTurnIfNeeded();
   }
 
   private advanceTurnIfNeeded(): void {
-    // If current active seat already has acted or has blackjack, advance
+    // Advance past seats that are already resolved (blackjack, busted, or acted)
     while (this.activeSeatIndex !== null && this.activeSeatIndex < this.seats.length) {
       const seat = this.seats[this.activeSeatIndex];
       if (!seat) break;
@@ -295,6 +386,9 @@ export class GameRoom {
 
     if (this.activeSeatIndex === null || this.activeSeatIndex >= this.seats.length) {
       this.runDealerTurn();
+    } else {
+      // Emit the settled active seat so clients and bot handlers see the correct state
+      this.emit();
     }
   }
 
@@ -303,9 +397,11 @@ export class GameRoom {
       throw new Error(`Cannot act in phase ${this.phase}.`);
     }
 
-    const notImplemented = ["double", "split", "insurance", "surrender"] as PlayerAction[];
-    if (notImplemented.includes(action)) {
-      throw new Error(`Action "${action}" is not implemented in Phase 1.`);
+    if (action === "split") {
+      throw new Error(`Action "split" is not implemented.`);
+    }
+    if (action === "insurance") {
+      throw new Error(`Use placeInsurance() or declineInsurance() for insurance.`);
     }
 
     const seatIdx = this.getSeatIndex(userId);
@@ -320,7 +416,44 @@ export class GameRoom {
       throw new Error(`${userId} is already busted.`);
     }
 
-    if (action === "hit") {
+    if (action === "surrender") {
+      // Surrender is only valid as the first action (2-card hand, no hits taken)
+      if (seat.hand.length !== 2) {
+        throw new Error("Surrender is only allowed on the initial two-card hand.");
+      }
+      seat.outcome = "surrender";
+      // Half the escrowed bet is returned; the other half is lost
+      seat.bankroll += Math.floor(seat.bet / 2);
+      seat.hasActed = true;
+      this.activeSeatIndex = seatIdx + 1;
+      this.emit();
+      this.advanceTurnIfNeeded();
+    } else if (action === "double") {
+      if (seat.hand.length !== 2 || seat.isBlackjack) {
+        throw new Error(
+          "Double down is only allowed on the initial two-card hand (not blackjack)."
+        );
+      }
+      if (seat.bankroll < seat.bet) {
+        throw new Error(
+          `Insufficient bankroll to double down (need ${seat.bet}, have ${seat.bankroll}).`
+        );
+      }
+      // Escrow an additional bet equal to the original bet
+      seat.bankroll -= seat.bet;
+      seat.bet *= 2;
+      // Draw exactly one card
+      seat.hand.push(this.deck.draw(false));
+      const result = calculateHand(seat.hand);
+      seat.handValue = result.value;
+      seat.isSoft = result.isSoft;
+      seat.isBusted = result.isBusted;
+      seat.isBlackjack = result.isBlackjack;
+      seat.hasActed = true;
+      this.activeSeatIndex = seatIdx + 1;
+      this.emit();
+      this.advanceTurnIfNeeded();
+    } else if (action === "hit") {
       seat.hand.push(this.deck.draw(false));
       const result = calculateHand(seat.hand);
       seat.handValue = result.value;
@@ -376,12 +509,15 @@ export class GameRoom {
     const dealerResult = calculateHand(this.dealer.hand);
 
     for (const seat of this.seats) {
+      // Surrendered seats already had their outcome set and half-bet returned in playerAction()
+      if (seat.outcome === "surrender") continue;
+
       const playerResult = calculateHand(seat.hand);
       const outcome = resolveHand(playerResult, dealerResult);
       seat.outcome = outcome;
 
-      // Apply bankroll changes based on outcome
-      // Bet was already escrowed (deducted from bankroll at placeBet time)
+      // Apply bankroll changes based on outcome.
+      // Main bet was already escrowed (deducted from bankroll at placeBet time).
       switch (outcome) {
         case "win":
           seat.bankroll += seat.bet * 2;
@@ -396,6 +532,7 @@ export class GameRoom {
           // Bet already gone — no return
           break;
         case "surrender":
+          // Should not reach here (handled above), but included for exhaustiveness
           seat.bankroll += Math.floor(seat.bet / 2);
           break;
       }
@@ -417,7 +554,10 @@ export class GameRoom {
       seat.isBlackjack = false;
       seat.hasActed = false;
       seat.outcome = null;
+      seat.insuranceBet = 0;
+      seat.insuranceDeclined = false;
     }
+    this.insurancePending = new Set();
     this.dealer = { hand: [], handValue: 0, isSoft: false };
     this.activeSeatIndex = null;
 
@@ -450,6 +590,7 @@ export class GameRoom {
           hasActed: seat.hasActed,
           isNpc: seat.isNpc,
           outcome: seat.outcome,
+          insuranceBet: seat.insuranceBet,
         })),
         dealer: {
           hand: this.dealer.hand.map((c) => ({

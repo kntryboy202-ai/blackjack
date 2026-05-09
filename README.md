@@ -1,6 +1,6 @@
 # Blackjack
 
-Real-time multiplayer blackjack with user accounts, persistent bankrolls, NPC bots, and a casino felt UI. Built with React 19, Node 24, Socket.io, Prisma, and SQLite (dev) / PostgreSQL (prod).
+Real-time multiplayer blackjack with user accounts, persistent bankrolls, NPC bots, and a casino felt UI. Supports surrender, double down, and insurance. Built with React 19, Node 24, Socket.io, Prisma, and SQLite (dev) / PostgreSQL (prod).
 
 ## Quick start
 

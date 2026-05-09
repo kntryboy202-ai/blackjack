@@ -85,6 +85,7 @@ describe("PlayerSeat", () => {
       isBlackjack: false,
       hasActed: false,
       isNpc: false,
+      insuranceBet: 0,
     };
     expect(seat.bankroll).toBe(1000);
     expect(seat.isNpc).toBe(false);

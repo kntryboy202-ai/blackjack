@@ -38,6 +38,7 @@ export interface PlayerSeat {
   hasActed: boolean;
   isNpc: boolean;
   outcome?: HandOutcome | null;
+  insuranceBet: number;
 }
 
 export interface DealerState {
