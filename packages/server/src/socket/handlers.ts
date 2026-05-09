@@ -265,11 +265,41 @@ export function registerHandlers(io: Server, socket: Socket): void {
 
   socket.on("skip_insurance", () => {
     const tableId = socketToTable.get(socket.id);
-    if (!tableId) return;
+    if (!tableId || !currentUser) return;
     const room = rooms.get(tableId);
     if (!room) return;
     try {
-      room.skipInsurance();
+      room.declineInsurance(currentUser.id);
+    } catch (err) {
+      socket.emit("error", { message: (err as Error).message });
+    }
+  });
+
+  socket.on("decline_insurance", () => {
+    const tableId = socketToTable.get(socket.id);
+    if (!tableId || !currentUser) return;
+    const room = rooms.get(tableId);
+    if (!room) return;
+    try {
+      room.declineInsurance(currentUser.id);
+    } catch (err) {
+      socket.emit("error", { message: (err as Error).message });
+    }
+  });
+
+  socket.on("place_insurance", (payload: { amount: number }) => {
+    const tableId = socketToTable.get(socket.id);
+    if (!tableId || !currentUser) {
+      socket.emit("error", { message: "Not at a table or not authenticated." });
+      return;
+    }
+    const room = rooms.get(tableId);
+    if (!room) {
+      socket.emit("error", { message: "Game room not found." });
+      return;
+    }
+    try {
+      room.placeInsurance(currentUser.id, payload.amount);
     } catch (err) {
       socket.emit("error", { message: (err as Error).message });
     }

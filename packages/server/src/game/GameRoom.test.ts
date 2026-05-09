@@ -140,7 +140,15 @@ describe("GameRoom — dealing phase", () => {
   });
 
   it("dealer has exactly 2 cards after dealing", () => {
-    const room = makeRoom();
+    // Fixed deck: player 8+6=14 (no BJ), dealer 7(up)+5(hole) — safe, no BJ, no auto-advance
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "7", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: "5", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
     room.addPlayer("u1", "Alice", 1000, "sock-1");
     room.startGame();
     room.placeBet("u1", 50);
@@ -149,7 +157,15 @@ describe("GameRoom — dealing phase", () => {
   });
 
   it("dealer's second card (index 1) is faceDown after dealing", () => {
-    const room = makeRoom();
+    // Fixed deck: player 8+6=14 (no BJ), dealer 7(up)+5(hole) — safe, no auto-advance
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "7", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: "5", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
     room.addPlayer("u1", "Alice", 1000, "sock-1");
     room.startGame();
     room.placeBet("u1", 50);
@@ -242,11 +258,8 @@ describe("GameRoom — player turns", () => {
     expect(() => room.playerAction("u2", "hit")).toThrow();
   });
 
-  it("double/split/insurance/surrender throw 'not implemented'", () => {
-    expect(() => room.playerAction("u1", "double")).toThrow(/not implemented/i);
+  it("split throws 'not implemented'", () => {
     expect(() => room.playerAction("u1", "split")).toThrow(/not implemented/i);
-    expect(() => room.playerAction("u1", "insurance")).toThrow(/not implemented/i);
-    expect(() => room.playerAction("u1", "surrender")).toThrow(/not implemented/i);
   });
 
   it("after all players stand/bust, dealer runs and phase advances past DEALER_TURN", () => {
@@ -389,7 +402,10 @@ describe("GameRoom — resolution", () => {
     room.startGame();
     room.placeBet("u1", 50);
     skipInsuranceIfNeeded(room);
-    room.playerAction("u1", "stand");
+    // Guard: dealer BJ (via insurance fast-path) may already be in RESOLVE
+    if (room.getSnapshot().phase === "PLAYER_TURNS") {
+      room.playerAction("u1", "stand");
+    }
     room.removePlayer("u1");
     room.nextRound();
     expect(room.getSnapshot().phase).toBe("WAITING_FOR_PLAYERS");
@@ -401,7 +417,10 @@ describe("GameRoom — resolution", () => {
     room.startGame();
     room.placeBet("u1", 50);
     skipInsuranceIfNeeded(room);
-    room.playerAction("u1", "stand");
+    // Guard: dealer BJ (via insurance fast-path) may already be in RESOLVE
+    if (room.getSnapshot().phase === "PLAYER_TURNS") {
+      room.playerAction("u1", "stand");
+    }
     const beforeRound = room.getSnapshot().roundNumber;
     room.nextRound();
     expect(room.getSnapshot().roundNumber).toBe(beforeRound + 1);
@@ -552,5 +571,338 @@ describe("GameRoom — NPC bots", () => {
   it("getConfig returns minBet and maxBet", () => {
     const room = makeRoom({ minBet: 5, maxBet: 200 });
     expect(room.getConfig()).toEqual({ minBet: 5, maxBet: 200 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Surrender
+// ---------------------------------------------------------------------------
+
+describe("GameRoom — surrender", () => {
+  function setupRoomForSurrender(): GameRoom {
+    // Player: 8+6=14, Dealer upcard: 7 (not Ace), Dealer hole: 5 → dealer=12
+    // Dealer draws K → 12+10=22 (bust) → player wins if they don't surrender
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false }, // player 1st
+      { suit: "diamonds", rank: "7", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "hearts", rank: "6", faceDown: false }, // player 2nd
+      { suit: "clubs", rank: "5", faceDown: false }, // dealer hole
+      { suit: "hearts", rank: "K", faceDown: false }, // dealer draws → 22 bust
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    return room;
+  }
+
+  it("surrender on first action sets outcome to 'surrender' and returns half bet", () => {
+    const room = setupRoomForSurrender();
+    room.playerAction("u1", "surrender");
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    expect(snap.seats[0]?.outcome).toBe("surrender");
+    // Bet 50 escrowed (bankroll was 1000 → 950). Half of 50 = 25 returned → 975.
+    expect(snap.seats[0]?.bankroll).toBe(975);
+  });
+
+  it("surrender after hitting throws", () => {
+    // Non-busting hit (8+6+2=16) so the dealer does not run and the player still has a turn
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "7", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: "5", faceDown: false },
+      { suit: "hearts", rank: "2", faceDown: false }, // player hit → 16 (no bust)
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.playerAction("u1", "hit"); // now has 3 cards
+    expect(() => room.playerAction("u1", "surrender")).toThrow();
+  });
+
+  it("surrender when not the active seat throws", () => {
+    // Two players: u1 is seat 0 (active), u2 is seat 1
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "clubs", rank: "9", faceDown: false },
+      { suit: "diamonds", rank: "7", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "spades", rank: "7", faceDown: false },
+      { suit: "clubs", rank: "5", faceDown: false },
+      { suit: "hearts", rank: "K", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addPlayer("u2", "Bob", 1000, "sock-2");
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.placeBet("u2", 50);
+    expect(() => room.playerAction("u2", "surrender")).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Double Down
+// ---------------------------------------------------------------------------
+
+describe("GameRoom — double down", () => {
+  function setupRoomForDouble(): GameRoom {
+    // Player: 8+3=11, Dealer upcard: 7 (not Ace), Dealer hole: 5 → dealer=12
+    // Player doubles → gets K → 8+3+K=21
+    // Dealer draws 7 → 12+7=19
+    // Player 21 > Dealer 19 → win
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false }, // player 1st
+      { suit: "diamonds", rank: "7", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "hearts", rank: "3", faceDown: false }, // player 2nd → 11
+      { suit: "clubs", rank: "5", faceDown: false }, // dealer hole → dealer=12
+      { suit: "diamonds", rank: "K", faceDown: false }, // player double card → 21
+      { suit: "hearts", rank: "7", faceDown: false }, // dealer draws → 19
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    return room;
+  }
+
+  it("double down doubles the bet; both bets are lost on player bust", () => {
+    // Player busts on the double card → net loss = main bet + double bet.
+    // Player: 8+8=16, dealer: 7(up)+K(hole)=17 (stands). Player doubles → K → 26 bust.
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false }, // player 1st
+      { suit: "diamonds", rank: "7", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "hearts", rank: "8", faceDown: false }, // player 2nd → 16
+      { suit: "clubs", rank: "K", faceDown: false }, // dealer hole → 17 (stands, no draw)
+      { suit: "diamonds", rank: "K", faceDown: false }, // player double card → 26 bust
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.playerAction("u1", "double");
+    const snap = room.getSnapshot();
+    // bet doubled (50 → 100), player busted → loss → bankroll: 1000 - 50 - 50 = 900
+    expect(snap.seats[0]?.bet).toBe(100);
+    expect(snap.seats[0]?.bankroll).toBe(900);
+    expect(snap.seats[0]?.outcome).toBe("loss");
+  });
+
+  it("double down deals exactly one card to player then auto-stands", () => {
+    const room = setupRoomForDouble();
+    room.playerAction("u1", "double");
+    const snap = room.getSnapshot();
+    // Player had 2 cards, got 1 more → 3. Phase advanced to DEALER_TURN/RESOLVE.
+    expect(snap.seats[0]?.hand).toHaveLength(3);
+    expect(["DEALER_TURN", "RESOLVE"]).toContain(snap.phase);
+  });
+
+  it("double down wins pay on the doubled bet", () => {
+    const room = setupRoomForDouble();
+    room.playerAction("u1", "double");
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    // Player 21 vs Dealer 19 → win. Bet 100. Bankroll was 900 → +200 → 1100.
+    expect(snap.seats[0]?.bankroll).toBe(1100);
+    expect(snap.seats[0]?.outcome).toBe("win");
+  });
+
+  it("double down after hitting throws", () => {
+    const room = setupRoomForDouble();
+    room.playerAction("u1", "hit");
+    expect(() => room.playerAction("u1", "double")).toThrow();
+  });
+
+  it("double down with insufficient bankroll throws", () => {
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "7", faceDown: false },
+      { suit: "hearts", rank: "3", faceDown: false },
+      { suit: "clubs", rank: "5", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    // Only 60 chips: bet 50, leaving 10. Need 50 more to double.
+    room.addPlayer("u1", "Alice", 60, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    expect(() => room.playerAction("u1", "double")).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Insurance
+// ---------------------------------------------------------------------------
+
+describe("GameRoom — insurance", () => {
+  // Dealer upcard A, hole = dealerHoleRank
+  // "K" → dealer BJ (A+K=21); "7" → no BJ (A+7=18, dealer stands immediately)
+  function setupRoomWithAceUpcard(dealerHoleRank: "K" | "7" = "7"): GameRoom {
+    // Player: 8+6=14, Dealer upcard: A
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "A", faceDown: false }, // dealer upcard (ACE)
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: dealerHoleRank, faceDown: false }, // dealer hole
+      // Extra cards for dealer draw when no BJ (A+7=18 stands immediately, no extras needed)
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    expect(room.getSnapshot().phase).toBe("CHECK_INSURANCE");
+    return room;
+  }
+
+  it("placeInsurance sets insuranceBet on seat and deducts from bankroll", () => {
+    const room = setupRoomWithAceUpcard("7");
+    room.placeInsurance("u1", 25);
+    const snap = room.getSnapshot();
+    // bankroll: 1000 - 50 (main bet) - 25 (insurance) = 925
+    expect(snap.seats[0]?.insuranceBet).toBe(25);
+    expect(snap.seats[0]?.bankroll).toBe(925);
+  });
+
+  it("placeInsurance amount above half of main bet throws", () => {
+    const room = setupRoomWithAceUpcard("7");
+    // max insurance = Math.floor(50/2) = 25; 26 is too much
+    expect(() => room.placeInsurance("u1", 26)).toThrow();
+  });
+
+  it("placeInsurance with insufficient bankroll throws", () => {
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false },
+      { suit: "diamonds", rank: "A", faceDown: false },
+      { suit: "hearts", rank: "6", faceDown: false },
+      { suit: "clubs", rank: "7", faceDown: false },
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    // 51 chips: bet 50 → 1 chip left; can't cover 25 insurance
+    room.addPlayer("u1", "Alice", 51, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    expect(() => room.placeInsurance("u1", 25)).toThrow();
+  });
+
+  it("declineInsurance transitions to PLAYER_TURNS", () => {
+    const room = setupRoomWithAceUpcard("7");
+    room.declineInsurance("u1");
+    expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
+  });
+
+  it("skipInsurance (all-decline convenience) transitions to PLAYER_TURNS", () => {
+    const room = setupRoomWithAceUpcard("7");
+    room.skipInsurance();
+    expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
+  });
+
+  it("insurance bet is lost when dealer does not have blackjack", () => {
+    const room = setupRoomWithAceUpcard("7"); // A+7=18, dealer stands; no BJ
+    room.placeInsurance("u1", 25);
+    // After decline/place, phase advances to PLAYER_TURNS (u1 is the only human)
+    room.playerAction("u1", "stand");
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    // Player 14 vs Dealer 18 → loss.
+    // bankroll: 925 (after main bet + insurance deducted). Main bet lost → stays 925.
+    expect(snap.seats[0]?.bankroll).toBe(925);
+    expect(snap.seats[0]?.outcome).toBe("loss");
+  });
+
+  it("insurance wins 2:1 when dealer has blackjack and player loses main hand", () => {
+    const room = setupRoomWithAceUpcard("K"); // A+K=21, dealer BJ
+    room.placeInsurance("u1", 25);
+    // placeInsurance causes immediate resolution (dealer BJ skips player turns)
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    expect(snap.seats[0]?.outcome).toBe("loss"); // 8+6=14 loses to dealer BJ
+    // bankroll: 1000 - 50 (main bet) - 25 (insurance) + 75 (insurance 2:1 win) = 1000
+    expect(snap.seats[0]?.bankroll).toBe(1000);
+  });
+
+  it("player BJ + dealer BJ → push on main hand, insurance still pays 2:1", () => {
+    // player: 10+A = BJ, dealer: A(up)+K(hole) = BJ
+    // Deal order: player-1st, dealer-upcard, player-2nd, dealer-hole
+    const cards: Card[] = [
+      { suit: "spades", rank: "10", faceDown: false }, // player 1st
+      { suit: "diamonds", rank: "A", faceDown: false }, // dealer upcard (Ace)
+      { suit: "hearts", rank: "A", faceDown: false }, // player 2nd → 10+A = BJ
+      { suit: "clubs", rank: "K", faceDown: false }, // dealer hole → A+K = BJ
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.startGame();
+    room.placeBet("u1", 50);
+    expect(room.getSnapshot().phase).toBe("CHECK_INSURANCE");
+    room.placeInsurance("u1", 25);
+    const snap = room.getSnapshot();
+    expect(snap.phase).toBe("RESOLVE");
+    expect(snap.seats[0]?.outcome).toBe("push"); // both BJ → push
+    // bankroll: 1000 - 50 (main) - 25 (insurance) + 75 (insurance 2:1) + 50 (push return) = 1050
+    expect(snap.seats[0]?.bankroll).toBe(1050);
+  });
+
+  it("multiple human players all respond before phase advances", () => {
+    // 2 players, dealer shows Ace, hole is 7 (no BJ)
+    // Multi-player deal: u1-1st, u2-1st, dealer-upcard, u1-2nd, u2-2nd, dealer-hole
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false }, // u1 1st
+      { suit: "clubs", rank: "9", faceDown: false }, // u2 1st
+      { suit: "diamonds", rank: "A", faceDown: false }, // dealer upcard (Ace)
+      { suit: "hearts", rank: "6", faceDown: false }, // u1 2nd
+      { suit: "spades", rank: "7", faceDown: false }, // u2 2nd
+      { suit: "clubs", rank: "7", faceDown: false }, // dealer hole (A+7=18, no BJ)
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addPlayer("u2", "Bob", 1000, "sock-2");
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.placeBet("u2", 50);
+    expect(room.getSnapshot().phase).toBe("CHECK_INSURANCE");
+
+    // Only u1 declines — should still wait for u2
+    room.declineInsurance("u1");
+    expect(room.getSnapshot().phase).toBe("CHECK_INSURANCE");
+
+    // u2 declines — now both responded, phase advances
+    room.declineInsurance("u2");
+    expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
+  });
+
+  it("NPC bots do not block the insurance transition", () => {
+    // 1 human + 1 bot. Bot should not block the insurance wait.
+    const cards: Card[] = [
+      { suit: "spades", rank: "8", faceDown: false }, // u1 1st
+      { suit: "clubs", rank: "9", faceDown: false }, // bot 1st
+      { suit: "diamonds", rank: "A", faceDown: false }, // dealer upcard (Ace)
+      { suit: "hearts", rank: "6", faceDown: false }, // u1 2nd
+      { suit: "spades", rank: "7", faceDown: false }, // bot 2nd
+      { suit: "clubs", rank: "7", faceDown: false }, // dealer hole (A+7=18, no BJ)
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addBot("bot-1", "Robo Rick", 10000);
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.placeBet("bot-1", 50);
+    expect(room.getSnapshot().phase).toBe("CHECK_INSURANCE");
+
+    // Only u1 (human) needs to respond; declining moves the phase
+    room.declineInsurance("u1");
+    expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
   });
 });
