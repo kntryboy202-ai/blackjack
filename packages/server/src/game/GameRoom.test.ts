@@ -906,3 +906,57 @@ describe("GameRoom — insurance", () => {
     expect(room.getSnapshot().phase).toBe("PLAYER_TURNS");
   });
 });
+
+describe("GameRoom — blackjack seat auto-advance", () => {
+  it("when seat 0 has blackjack, activeSeatIndex advances to seat 1 after startPlayerTurns", () => {
+    // Deal player a blackjack (10+A), bot a normal hand (8+6=14), dealer 7 up + 5 hole (no BJ)
+    // Deal order: player-1st, bot-1st, dealer-upcard, player-2nd, bot-2nd, dealer-hole
+    const cards: Card[] = [
+      { suit: "spades", rank: "10", faceDown: false }, // u1 1st
+      { suit: "clubs", rank: "8", faceDown: false }, // bot 1st
+      { suit: "diamonds", rank: "7", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "hearts", rank: "A", faceDown: false }, // u1 2nd → 10+A = BJ
+      { suit: "spades", rank: "6", faceDown: false }, // bot 2nd → 14
+      { suit: "clubs", rank: "5", faceDown: false }, // dealer hole → 12
+      { suit: "hearts", rank: "9", faceDown: false }, // dealer draws → 21
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addBot("bot-1", "Robo Rick", 10000);
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.placeBet("bot-1", 50);
+
+    const snap = room.getSnapshot();
+    expect(snap.seats[0]?.isBlackjack).toBe(true);
+    // activeSeatIndex must point to the bot (seat 1), not the BJ human (seat 0)
+    expect(snap.activeSeatIndex).toBe(1);
+    expect(snap.phase).toBe("PLAYER_TURNS");
+  });
+
+  it("double down throws when player has blackjack", () => {
+    // u1: 10+A = BJ (seat 0, auto-skipped), bot: 8+6=14 (seat 1, active)
+    // Deal order: u1-1st, bot-1st, dealer-upcard, u1-2nd, bot-2nd, dealer-hole
+    const cards: Card[] = [
+      { suit: "spades", rank: "10", faceDown: false }, // u1 1st
+      { suit: "clubs", rank: "8", faceDown: false }, // bot 1st
+      { suit: "diamonds", rank: "7", faceDown: false }, // dealer upcard (not Ace)
+      { suit: "hearts", rank: "A", faceDown: false }, // u1 2nd → 10+A = BJ
+      { suit: "spades", rank: "6", faceDown: false }, // bot 2nd → 14
+      { suit: "clubs", rank: "5", faceDown: false }, // dealer hole → 12
+      { suit: "hearts", rank: "9", faceDown: false }, // dealer draws → 21
+    ];
+    const room = new GameRoom("table-1", { deckCount: 0, minBet: 1, maxBet: 500 });
+    (room as unknown as { deck: Deck }).deck = buildDeckWithCards(cards);
+    room.addPlayer("u1", "Alice", 1000, "sock-1");
+    room.addBot("bot-1", "Robo Rick", 10000);
+    room.startGame();
+    room.placeBet("u1", 50);
+    room.placeBet("bot-1", 50);
+
+    expect(room.getSnapshot().seats[0]?.isBlackjack).toBe(true);
+    // u1 was auto-skipped (BJ); activeSeat is now bot-1 → "not your turn"
+    expect(() => room.playerAction("u1", "double")).toThrow();
+  });
+});

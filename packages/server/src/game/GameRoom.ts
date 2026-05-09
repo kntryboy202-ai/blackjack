@@ -368,14 +368,12 @@ export class GameRoom {
   private startPlayerTurns(): void {
     this.phase = "PLAYER_TURNS";
     this.activeSeatIndex = 0;
-    this.emit();
-
-    // Advance past any already-resolved seats (e.g. blackjack)
+    // Don't emit before advancing — advanceTurnIfNeeded emits the settled state
     this.advanceTurnIfNeeded();
   }
 
   private advanceTurnIfNeeded(): void {
-    // If current active seat already has acted or has blackjack, advance
+    // Advance past seats that are already resolved (blackjack, busted, or acted)
     while (this.activeSeatIndex !== null && this.activeSeatIndex < this.seats.length) {
       const seat = this.seats[this.activeSeatIndex];
       if (!seat) break;
@@ -388,6 +386,9 @@ export class GameRoom {
 
     if (this.activeSeatIndex === null || this.activeSeatIndex >= this.seats.length) {
       this.runDealerTurn();
+    } else {
+      // Emit the settled active seat so clients and bot handlers see the correct state
+      this.emit();
     }
   }
 
@@ -428,8 +429,10 @@ export class GameRoom {
       this.emit();
       this.advanceTurnIfNeeded();
     } else if (action === "double") {
-      if (seat.hand.length !== 2) {
-        throw new Error("Double down is only allowed on the initial two-card hand.");
+      if (seat.hand.length !== 2 || seat.isBlackjack) {
+        throw new Error(
+          "Double down is only allowed on the initial two-card hand (not blackjack)."
+        );
       }
       if (seat.bankroll < seat.bet) {
         throw new Error(

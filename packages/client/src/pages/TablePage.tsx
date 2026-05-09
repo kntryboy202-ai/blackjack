@@ -233,12 +233,15 @@ export function TablePage() {
             <button type="button" onClick={() => handleAction("stand")} style={secondaryBtn}>
               Stand
             </button>
-            {mySeat && mySeat.hand.length === 2 && mySeat.bankroll >= mySeat.bet && (
-              <button type="button" onClick={() => handleAction("double")} style={secondaryBtn}>
-                Double
-              </button>
-            )}
-            {mySeat && mySeat.hand.length === 2 && (
+            {mySeat &&
+              mySeat.hand.length === 2 &&
+              !mySeat.isBlackjack &&
+              mySeat.bankroll >= mySeat.bet && (
+                <button type="button" onClick={() => handleAction("double")} style={secondaryBtn}>
+                  Double
+                </button>
+              )}
+            {mySeat && mySeat.hand.length === 2 && !mySeat.isBlackjack && (
               <button type="button" onClick={() => handleAction("surrender")} style={dangerBtn}>
                 Surrender
               </button>
