@@ -86,6 +86,8 @@ describe("PlayerSeat", () => {
       hasActed: false,
       isNpc: false,
       insuranceBet: 0,
+      splitHand: null,
+      activeHandIndex: 0,
     };
     expect(seat.bankroll).toBe(1000);
     expect(seat.isNpc).toBe(false);
